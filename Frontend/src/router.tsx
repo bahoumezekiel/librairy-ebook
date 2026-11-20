@@ -8,11 +8,13 @@ import { PublicLayout } from "@/features/public/PublicLayout";
 import { AdminLoginPage } from "@/pages/admin/AdminLoginPage";
 import { BookPage } from "@/pages/BookPage";
 import { CatalogPage } from "@/pages/CatalogPage";
+import { ForgotPasswordPage } from "@/pages/ForgotPasswordPage";
 import { HomePage } from "@/pages/HomePage";
 import { LibraryPage } from "@/pages/LibraryPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { OrderPage } from "@/pages/OrderPage";
 import { RegisterPage } from "@/pages/RegisterPage";
+import { ResetPasswordPage } from "@/pages/ResetPasswordPage";
 import { SimulatedPaymentPage } from "@/pages/SimulatedPaymentPage";
 
 /**
@@ -64,8 +66,12 @@ export const router = createBrowserRouter([
     children: [
       { path: "/connexion", element: <LoginPage /> },
       { path: "/inscription", element: <RegisterPage /> },
+      { path: "/mot-de-passe-oublie", element: <ForgotPasswordPage /> },
     ],
   },
+  // Arrivée du lien reçu par e-mail. Hors d'`AuthLayout`, qui renvoie ailleurs un
+  // utilisateur déjà connecté : il doit pouvoir changer son mot de passe quand même.
+  { path: "/mot-de-passe/:uid/:token", element: <ResetPasswordPage /> },
   // Lecteur en plein écran, hors de la mise en page du site.
   {
     path: "/lire/:slug",

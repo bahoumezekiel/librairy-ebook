@@ -1,6 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Mail } from "lucide-react";
 import { useForm } from "react-hook-form";
+import { Link } from "react-router";
 import { z } from "zod";
 
 import { ApiError } from "@/api/client";
@@ -54,6 +55,12 @@ export function LoginForm() {
         error={errors.password?.message}
         {...register("password")}
       />
+      <Link
+        to="/mot-de-passe-oublie"
+        className="block text-right text-sm text-muted transition-colors duration-150 hover:text-ink"
+      >
+        Mot de passe oublié ?
+      </Link>
       <Button type="submit" loading={login.isPending} className="h-12 w-full">
         Se connecter
       </Button>

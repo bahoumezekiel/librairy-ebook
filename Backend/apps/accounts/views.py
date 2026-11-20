@@ -20,6 +20,8 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from .serializers import (
     REFRESH_COOKIE_NAME,
     CookieTokenRefreshSerializer,
+    PasswordResetConfirmSerializer,
+    PasswordResetSerializer,
     RegisterSerializer,
     UserSerializer,
 )
@@ -82,6 +84,33 @@ class LogoutView(APIView):
         response = Response(status=status.HTTP_204_NO_CONTENT)
         response.delete_cookie(**REFRESH_COOKIE)
         return response
+
+
+class PasswordResetBaseView(generics.GenericAPIView):
+    """Socle des deux étapes de la réinitialisation : ouvertes, limitées, et muettes."""
+
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "password_reset"
+
+    @extend_schema(responses={204: None})
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PasswordResetView(PasswordResetBaseView):
+    """Envoie un lien de réinitialisation à l'adresse indiquée, si un compte existe."""
+
+    serializer_class = PasswordResetSerializer
+
+
+class PasswordResetConfirmView(PasswordResetBaseView):
+    """Change le mot de passe sur présentation d'un lien valide."""
+
+    serializer_class = PasswordResetConfirmSerializer
 
 
 class MeView(generics.RetrieveAPIView):

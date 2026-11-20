@@ -11,7 +11,9 @@ on:
 jobs:
   backend:
     name: API (style et tests)
-    runs-on: ubuntu-latest
+    # Version figée : l'étiquette `ubuntu-latest` bascule sur Ubuntu 26.04 en
+    # novembre 2026, ce qui changerait les outils préinstallés sans prévenir.
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: Backend
@@ -35,7 +37,9 @@ jobs:
           --health-interval 5s --health-timeout 3s --health-retries 10
 
     env:
-      DJANGO_SECRET_KEY: cle-de-test-sans-valeur
+      # Clé sans valeur, propre aux contrôles : 64 caractères, assez longue pour que
+      # Django et la bibliothèque de jetons ne signalent pas une signature faible.
+      DJANGO_SECRET_KEY: cle-de-controle-sans-valeur-ne-jamais-utiliser-ailleurs-2f9c4e71
       DJANGO_DEBUG: "True"
       DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
       POSTGRES_DB: fasolib
@@ -55,18 +59,36 @@ jobs:
       S3_SECRET_KEY: fasolib-secret-de-test
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # Démarré à la main, et non en `services` : l'image a besoin de ses arguments.
+      # Le volume n'est pas une option : /data n'existe pas dans l'image, et le backend
+      # posix s'y installe au démarrage. Sans lui, le conteneur s'arrête aussitôt.
       - name: Stockage objet compatible S3
         run: |
           docker run --detach --name s3 --publish 9000:7070 \
             --env ROOT_ACCESS_KEY=$S3_ACCESS_KEY \
             --env ROOT_SECRET_KEY=$S3_SECRET_KEY \
+            --volume s3_data:/data \
             versity/versitygw posix /data
-          timeout 60 sh -c 'until curl --silent --output /dev/null http://127.0.0.1:9000; do sleep 1; done'
 
-      - uses: actions/setup-python@v6
+          # La passerelle répond 403 sur la racine : n'importe quelle réponse HTTP
+          # suffit à prouver qu'elle écoute. On abandonne dès que le conteneur meurt,
+          # au lieu d'attendre dans le vide, et on montre son journal : un échec doit
+          # nommer sa cause, pas se contenter d'un dépassement de délai.
+          for _ in $(seq 60); do
+            if curl --silent --max-time 3 http://127.0.0.1:9000 >/dev/null 2>&1; then
+              echo "Stockage objet prêt."
+              exit 0
+            fi
+            docker inspect --format '{{.State.Running}}' s3 | grep -q true || break
+            sleep 1
+          done
+          echo "::error::Le stockage objet n'a pas démarré."
+          docker logs s3
+          exit 1
+
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.15"
           cache: pip
@@ -83,23 +105,25 @@ jobs:
         run: python manage.py check --deploy
         env:
           DJANGO_DEBUG: "False"
-          GENIUSPAY_API_SECRET: cle-de-test-sans-valeur
-          GENIUSPAY_WEBHOOK_SECRET: cle-de-test-sans-valeur
+          # Exigé en production : sans lui, l'API refuse de démarrer (réglage vérifié ici).
+          EMAIL_HOST: smtp.exemple-de-controle.test
+          GENIUSPAY_API_SECRET: cle-de-controle-sans-valeur
+          GENIUSPAY_WEBHOOK_SECRET: cle-de-controle-sans-valeur
 
       - name: Tests
         run: pytest -q
 
   frontend:
     name: Site (types et compilation)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: Frontend
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "26"
           cache: npm

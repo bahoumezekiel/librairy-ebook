@@ -31,6 +31,7 @@ contient à la fois l'espace public et le back-office de l'administrateur.
 | **Livres payants** | Achat par mobile money via Genius Pay, puis lecture dans le lecteur intégré |
 | **Lecture hors ligne** | Le livre acheté est enregistré chiffré sur l'appareil et s'ouvre sans réseau |
 | **Notes** | Une note de 1 à 5 étoiles par livre acheté |
+| **Mot de passe oublié** | Un lien envoyé par e-mail, valable une heure et utilisable une seule fois |
 | **Nouveautés** | Une cloche annonce les livres publiés récemment |
 
 ### Pour l'administrateur
@@ -296,6 +297,14 @@ S3_PUBLIC_BUCKET=fasolib-public
 S3_ACCESS_KEY=fasolib
 S3_SECRET_KEY=<mot de passe long, tiré au hasard>
 
+# --- Envoi des e-mails (lien de réinitialisation du mot de passe) -------
+EMAIL_HOST=<serveur SMTP de votre fournisseur>
+EMAIL_PORT=587
+EMAIL_HOST_USER=<identifiant SMTP>
+EMAIL_HOST_PASSWORD=<mot de passe SMTP>
+EMAIL_USE_TLS=True
+DEFAULT_FROM_EMAIL=FasoLib <ne-pas-repondre@fasolib.bf>
+
 # --- Paiement -----------------------------------------------------------
 GENIUSPAY_API_KEY=<clé de production>
 GENIUSPAY_API_SECRET=<clé secrète de production>
@@ -314,13 +323,15 @@ présentent devant Django : Traefik, puis Nginx. Ce chiffre lui dit où retrouve
 adresse du client. Trop bas, tous vos visiteurs partageraient la même limite de tentatives
 de connexion ; trop haut, la limite ne s'appliquerait plus à personne.
 
-Trois protections refusent de laisser passer une mauvaise configuration — l'API ne démarre
-pas, plutôt que de tourner en étant vulnérable :
+Quatre protections refusent de laisser passer une mauvaise configuration — l'API ne
+démarre pas, plutôt que de tourner en étant vulnérable :
 
 - `GENIUSPAY_SIMULATION=True` avec `DJANGO_DEBUG=False` : le paiement simulé accorderait
   des livres sans paiement réel ;
 - `GENIUSPAY_API_SECRET` ou `GENIUSPAY_WEBHOOK_SECRET` vide : les notifications seraient
   acceptées sans vérification de signature ;
+- `EMAIL_HOST` vide : les liens de réinitialisation partiraient dans la console du
+  serveur, et un client ayant perdu son mot de passe ne pourrait plus se connecter ;
 - `DJANGO_ALLOWED_HOSTS` vide : toutes les requêtes sont refusées, l'oubli se voit aussitôt.
 
 ### Étape 4 — Rattacher le domaine
@@ -393,7 +404,8 @@ Puis, dans un navigateur :
 - [ ] `https://fasolib.bf` s'ouvre, le cadenas est là, sans avertissement ;
 - [ ] le catalogue affiche les couvertures ;
 - [ ] la console du navigateur ne montre **aucun** message commençant par « Refused to … » ;
-- [ ] un achat de bout en bout, avec un vrai paiement, puis le livre ouvert dans le lecteur.
+- [ ] un achat de bout en bout, avec un vrai paiement, puis le livre ouvert dans le lecteur ;
+- [ ] un « mot de passe oublié » demandé depuis la page de connexion, et l'e-mail bien reçu.
 
 **Une ligne reste à adapter** avant que les couvertures ne s'affichent : dans
 [`deploy/nginx/common.conf`](deploy/nginx/common.conf), la règle `img-src` de la politique

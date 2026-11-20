@@ -143,6 +143,40 @@ AUTH_PASSWORD_VALIDATORS = [
     )
 ]
 
+# Validité du lien de réinitialisation du mot de passe : une heure. Le jeton devient
+# aussi inutilisable dès que le mot de passe change, donc un lien ne sert qu'une fois.
+PASSWORD_RESET_TIMEOUT = 60 * 60
+
+# --- Envoi d'e-mails --------------------------------------------------------
+
+# Django 6.1 remplace les réglages EMAIL_* par MAILERS ; les deux ne peuvent coexister,
+# d'où la lecture des variables d'environnement dans des noms privés.
+_EMAIL_HOST = config("EMAIL_HOST", default="")
+DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="FasoLib <ne-pas-repondre@fasolib.local>")
+
+if _EMAIL_HOST:
+    _MAILER = {
+        "BACKEND": "django.core.mail.backends.smtp.EmailBackend",
+        "OPTIONS": {
+            "host": _EMAIL_HOST,
+            "port": config("EMAIL_PORT", default=587, cast=int),
+            "username": config("EMAIL_HOST_USER", default=""),
+            "password": config("EMAIL_HOST_PASSWORD", default=""),
+            "use_tls": config("EMAIL_USE_TLS", default=True, cast=bool),
+        },
+    }
+else:
+    # Sans fournisseur configuré, les messages s'affichent dans la console : pratique en
+    # développement, inacceptable en production, d'où le contrôle ci-dessous.
+    _MAILER = {"BACKEND": "django.core.mail.backends.console.EmailBackend"}
+
+MAILERS = {"default": _MAILER}
+
+# Un client qui ne reçoit pas son lien ne peut plus se connecter du tout : mieux vaut
+# refuser de démarrer que de laisser les messages partir dans le vide.
+if not DEBUG and not _EMAIL_HOST:
+    raise ImproperlyConfigured("EMAIL_HOST est obligatoire en production.")
+
 # --- Internationalisation ---------------------------------------------------
 
 LANGUAGE_CODE = "fr"
@@ -159,11 +193,14 @@ REST_FRAMEWORK = {
     # « auth » : inscription et connexion, par adresse IP.
     # « orders » : création de commande, par client.
     # « contact » et « newsletter » : formulaires publics, par adresse IP.
+    # « password_reset » : demande de lien, par adresse IP. Serré, car chaque appel
+    # envoie un e-mail à un tiers : la route ne doit pas servir à le harceler.
     "DEFAULT_THROTTLE_RATES": {
         "auth": "10/minute",
         "orders": "10/minute",
         "contact": "5/hour",
         "newsletter": "5/hour",
+        "password_reset": "5/hour",
     },
     # Nombre de proxys (Nginx) devant Django, pour lire la vraie adresse IP du client.
     "NUM_PROXIES": config("NUM_PROXIES", default=0, cast=int),
