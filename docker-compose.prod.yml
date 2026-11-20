@@ -1,0 +1,142 @@
+# Déploiement de FasoLib en production.
+#
+# Écrit pour Dokploy : aucun service ne prend les ports 80 et 443 de la machine, car
+# c'est Traefik — le répartiteur de Dokploy — qui les occupe et qui délivre le certificat
+# HTTPS. Vous rattachez le domaine au seul service `web`, sur le port 80 du conteneur.
+#
+# Pour un déploiement à la main, sans Dokploy, voir docs/EXPLOITATION.md : deux lignes
+# à changer suffisent.
+#
+# Les valeurs sensibles viennent des variables d'environnement (onglet « Environment »
+# de Dokploy, ou fichier .env à la racine pour un déploiement à la main).
+
+x-api: &api
+  build:
+    context: ./Backend
+  image: fasolib-api
+  env_file: .env
+  networks: [interne]
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [interne]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    # Les données sont écrites sur disque : une coupure ne vide pas la file des tâches.
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks: [interne]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Stockage objet compatible S3, pour les couvertures et les livres. Remplaçable par un
+  # fournisseur externe : supprimez ce service et pointez S3_ENDPOINT_URL vers lui.
+  s3:
+    image: versity/versitygw
+    command: posix /data
+    environment:
+      ROOT_ACCESS_KEY: ${S3_ACCESS_KEY}
+      ROOT_SECRET_KEY: ${S3_SECRET_KEY}
+    volumes:
+      - s3_data:/data
+    networks: [interne]
+    restart: unless-stopped
+
+  # Applique les migrations et crée les espaces de stockage, une fois, au démarrage.
+  # Les autres services n'attaquent qu'une fois cette étape réussie.
+  migrate:
+    <<: *api
+    command: sh -c "python manage.py migrate --no-input && python manage.py setup_storage"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      s3:
+        condition: service_started
+    restart: "no"
+
+  api:
+    <<: *api
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # Prépare les exemplaires chiffrés des livres achetés et relit les paiements.
+  worker:
+    <<: *api
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # Deux tâches à la fois : chacune charge un livre entier en mémoire pour le filigraner.
+    command: celery --app config worker --concurrency 2 --loglevel INFO
+    healthcheck:
+      test: ["CMD", "celery", "--app", "config", "inspect", "ping", "--timeout", "10"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
+
+  # Déclenche le rattrapage des paiements dont la notification s'est perdue.
+  # Un seul exemplaire doit tourner, sans quoi les tâches partiraient en double.
+  beat:
+    <<: *api
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: celery --app config beat --loglevel INFO --schedule /tmp/celerybeat-schedule
+
+  # Le seul service joignable de l'extérieur : il sert le site et transmet /api à l'API.
+  # C'est à lui que l'on rattache le domaine, sur le port 80.
+  web:
+    build:
+      context: .
+      dockerfile: Frontend/Dockerfile
+    image: fasolib-web
+    # `expose` et non `ports` : Traefik joint le conteneur par le réseau Docker, et
+    # publier le port 80 de la machine entrerait en conflit avec lui.
+    expose:
+      - "80"
+    networks: [interne, dokploy-network]
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  # Réseau privé de l'application : la base, le cache et l'API n'en sortent jamais.
+  interne:
+  # Réseau de Dokploy, par lequel Traefik joint le site. Créé par l'installation de
+  # Dokploy ; sans Dokploy, créez-le : `docker network create dokploy-network`.
+  dokploy-network:
+    external: true
+
+volumes:
+  postgres_data:
+  redis_data:
+  s3_data:

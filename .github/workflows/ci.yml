@@ -1,0 +1,110 @@
+# Contrôles automatiques à chaque envoi de code : style, tests, types, compilation.
+# Rien n'est déployé ici : la mise en production se fait depuis Dokploy (voir le README).
+
+name: Contrôles
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    name: API (style et tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Backend
+
+    services:
+      db:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: fasolib
+          POSTGRES_USER: fasolib
+          POSTGRES_PASSWORD: fasolib
+        ports: ["5434:5432"]
+        options: >-
+          --health-cmd "pg_isready -U fasolib"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+
+    env:
+      DJANGO_SECRET_KEY: cle-de-test-sans-valeur
+      DJANGO_DEBUG: "True"
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
+      POSTGRES_DB: fasolib
+      POSTGRES_USER: fasolib
+      POSTGRES_PASSWORD: fasolib
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: "5434"
+      REDIS_URL: redis://127.0.0.1:6379/0
+      CELERY_BROKER_URL: redis://127.0.0.1:6379/1
+      CORS_ALLOWED_ORIGINS: http://localhost:5173
+      FRONTEND_URL: http://localhost:5173
+      S3_ENDPOINT_URL: http://127.0.0.1:9000
+      S3_REGION: us-east-1
+      S3_PRIVATE_BUCKET: fasolib-prive
+      S3_PUBLIC_BUCKET: fasolib-public
+      S3_ACCESS_KEY: fasolib
+      S3_SECRET_KEY: fasolib-secret-de-test
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # Démarré à la main, et non en `services` : l'image a besoin de ses arguments.
+      - name: Stockage objet compatible S3
+        run: |
+          docker run --detach --name s3 --publish 9000:7070 \
+            --env ROOT_ACCESS_KEY=$S3_ACCESS_KEY \
+            --env ROOT_SECRET_KEY=$S3_SECRET_KEY \
+            versity/versitygw posix /data
+          timeout 60 sh -c 'until curl --silent --output /dev/null http://127.0.0.1:9000; do sleep 1; done'
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.15"
+          cache: pip
+          cache-dependency-path: Backend/requirements-dev.txt
+
+      - run: pip install --requirement requirements-dev.txt
+
+      - name: Style du code
+        run: ruff check .
+
+      # Vérifie la configuration telle qu'elle sera en production : clés Genius Pay
+      # exigées, HTTPS imposé, documentation de l'API fermée.
+      - name: Contrôles Django, y compris ceux du déploiement
+        run: python manage.py check --deploy
+        env:
+          DJANGO_DEBUG: "False"
+          GENIUSPAY_API_SECRET: cle-de-test-sans-valeur
+          GENIUSPAY_WEBHOOK_SECRET: cle-de-test-sans-valeur
+
+      - name: Tests
+        run: pytest -q
+
+  frontend:
+    name: Site (types et compilation)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Frontend
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: Frontend/package-lock.json
+
+      - run: npm ci
+      # Vérifie les types, puis compile : les deux doivent passer.
+      - run: npm run build

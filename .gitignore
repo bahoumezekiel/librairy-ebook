@@ -1,0 +1,28 @@
+# Secrets
+.env
+
+# Python
+Backend/env/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Fichiers produits à l'exécution par Celery beat
+Backend/celerybeat-schedule*
+Backend/celerybeat.pid
+
+# Fichiers téléversés en développement
+Backend/media/
+
+# Frontend
+node_modules/
+dist/
+Frontend/dev-dist/
+
+# Système
+.DS_Store
+Thumbs.db
+
+# Sauvegardes locales produites par deploy/sauvegarde.sh
+sauvegardes/

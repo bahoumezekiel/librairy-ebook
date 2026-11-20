@@ -1,0 +1,69 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+/* Charte graphique FasoLib : bleu nuit, orange et blanc, police Inter. */
+@theme {
+  --font-sans: "Inter Variable", system-ui, sans-serif;
+
+  /* Orange : actions principales et accents. */
+  --color-brand: #ff7f00;
+  --color-brand-hover: #e67200;
+  --color-brand-soft: #fff1e0;
+  /* Orange foncé : petits textes colorés, lisibles sur fond clair. */
+  --color-brand-strong: #b35900;
+
+  /* Bleu nuit : textes, et fonds des zones sombres (bandeaux, pied de page). */
+  --color-ink: #0b1b3a;
+  /* Bleu nuit éclairci : cartes posées sur un fond bleu nuit. */
+  --color-ink-raised: #14284f;
+
+  /* Vert : gratuit, succès, paiement validé. */
+  --color-leaf: #2f9e52;
+  --color-leaf-soft: #e4f5ea;
+  --color-leaf-strong: #1e6b37;
+
+  /* Rouge : erreurs et échecs uniquement. */
+  --color-danger: #b42318;
+  --color-danger-soft: #fdecea;
+
+  /* Texte secondaire, fonds clairs et bordures. */
+  --color-muted: #55627d;
+  --color-canvas: #f6f7fb;
+  --color-line: #e2e6ee;
+
+  --shadow-card: 0 1px 2px rgb(11 27 58 / 0.04), 0 6px 20px rgb(11 27 58 / 0.05);
+  --shadow-lift: 0 2px 4px rgb(11 27 58 / 0.06), 0 18px 40px rgb(11 27 58 / 0.14);
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-canvas font-sans text-ink antialiased;
+  }
+
+  /* Titres : lettres légèrement resserrées, comme le veut Inter en grande taille. */
+  h1,
+  h2,
+  h3 {
+    @apply tracking-tight;
+  }
+
+  /* Icônes (Lucide) : trait épais, pour un dessin franc et lisible. */
+  .lucide {
+    stroke-width: 2.5;
+  }
+
+  /* Contour de navigation au clavier, identique partout. */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-brand;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+}

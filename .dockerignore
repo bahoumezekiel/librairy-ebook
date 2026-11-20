@@ -1,0 +1,11 @@
+# Contexte de construction de l'image du site (racine du projet).
+.git/
+.github/
+.env
+docs/
+deploy/sauvegarde.sh
+Backend/
+Frontend/node_modules/
+Frontend/dist/
+Frontend/dev-dist/
+**/__pycache__/

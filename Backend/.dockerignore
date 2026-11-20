@@ -1,0 +1,11 @@
+# Environnement virtuel local : l'image installe ses propres dépendances.
+env/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+celerybeat-schedule*
+celerybeat.pid
+media/
+tests/
+README.md
