@@ -54,7 +54,9 @@ jobs:
       S3_ENDPOINT_URL: http://127.0.0.1:9000
       S3_REGION: us-east-1
       S3_PRIVATE_BUCKET: fasolib-prive
-      S3_PUBLIC_BUCKET: fasolib-public
+      # Même nom qu'en production : c'est aussi le chemin sous lequel Nginx sert les
+      # couvertures, et le contrôle de déploiement ci-dessous le vérifie.
+      S3_PUBLIC_BUCKET: media
       S3_ACCESS_KEY: fasolib
       S3_SECRET_KEY: fasolib-secret-de-test
 
