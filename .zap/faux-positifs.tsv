@@ -1,0 +1,21 @@
+# Occurrences écartées après vérification à la main, et elles seules.
+#
+# Colonnes, séparées par des tabulations :
+#   <règle ZAP>	<méthode>	<chemin>	<paramètre>	<ce qui a été vérifié>
+#
+# Une ligne ici n'écarte qu'une occurrence précise. La règle reste armée partout
+# ailleurs : la même alerte sur une autre adresse, ou sur un autre paramètre, bloque
+# toujours la mise en production. C'est la différence avec `regles.tsv`, qui éteindrait
+# la règle en entier — ce qu'on ne fait jamais pour une injection.
+#
+# Les trois lignes ci-dessous viennent du scanner actif de ZAP, qui déduit une injection
+# de la seule différence entre deux réponses. Vérifications menées le 22 novembre 2026 :
+#   1. aucune requête SQL brute dans le projet — `grep` sur .raw( .extra( cursor.execute
+#      ne trouve que « SELECT 1 » dans le contrôle de santé, sans donnée d'utilisateur ;
+#   2. la charge exacte de ZAP, rejouée à la main, est refusée à la validation (400) ;
+#   3. un « '; DROP TABLE accounts_user; -- » envoyé dans ces champs n'a rien détruit :
+#      la table existe toujours, et la valeur enregistrée est celle posée par le serveur.
+
+40018	POST	/api/auth/password-reset/	email	Champ EmailField : la chaîne est refusée à la validation avant toute requête. Le filtre utilise l'ORM, donc une requête paramétrée.
+40018	POST	/api/auth/register/	id	Le champ `id` est en lecture seule (clé primaire) : la valeur envoyée est ignorée et n'atteint jamais la base.
+40018	POST	/api/newsletter/	subscribed_at	Champ en lecture seule (`read_only_fields`) : la date est posée par le serveur, la valeur envoyée est ignorée.

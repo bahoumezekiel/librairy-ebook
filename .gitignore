@@ -24,5 +24,8 @@ Frontend/dev-dist/
 .DS_Store
 Thumbs.db
 
+# Rapports produits par le test d'intrusion OWASP ZAP
+rapport/
+
 # Sauvegardes locales produites par deploy/sauvegarde.sh
 sauvegardes/

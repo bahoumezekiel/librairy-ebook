@@ -1,0 +1,177 @@
+# Contrôles de sécurité, répétés dans le temps.
+#
+# Deux choses y sont vérifiées :
+#   1. les bibliothèques utilisées n'ont pas de faille connue ;
+#   2. la plateforme elle-même résiste à une attaque automatisée (OWASP ZAP).
+#
+# Le test d'intrusion ne vise ni une maquette ni le site en production, mais la **vraie
+# pile de production** — mêmes images, même Nginx, même Gunicorn — montée pour l'occasion
+# sur une base vide, puis détruite avec ses volumes.
+#
+# Pourquoi aussi chaque semaine, et pas seulement à chaque modification : une faille
+# publiée demain touche un code qui, lui, n'a pas bougé.
+
+name: Sécurité
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Tous les lundis à 4 h UTC.
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+# Cette chaîne ne fait que lire le dépôt : elle n'écrit ni commit, ni commentaire, ni ticket.
+permissions:
+  contents: read
+
+env:
+  # Nom de projet fixe : le réseau Docker s'appelle alors toujours `fasolib-scan_interne`,
+  # ici comme sur la machine de qui rejoue l'analyse.
+  COMPOSE_PROJECT_NAME: fasolib-scan
+
+jobs:
+  bibliotheques:
+    name: Bibliothèques vulnérables
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.15"
+
+      # `pip-audit` est l'outil de la fondation Python : il compare les versions
+      # installées à la base publique des vulnérabilités (PyPI Advisory Database).
+      - name: Bibliothèques Python
+        run: |
+          pip install pip-audit==2.10.1
+          pip-audit --requirement Backend/requirements.txt --strict
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: Frontend/package-lock.json
+
+      # Seules les failles élevées et critiques arrêtent la chaîne : l'écosystème npm en
+      # signale beaucoup qui ne concernent que des outils de compilation, jamais exécutés
+      # chez le visiteur.
+      - name: Bibliothèques du site
+        working-directory: Frontend
+        run: npm audit --audit-level=high
+
+  intrusion:
+    name: Test d'intrusion (OWASP ZAP)
+    runs-on: ubuntu-24.04
+
+    env:
+      # En production, Django impose HTTPS, et c'est Traefik qui pose cet en-tête. Sans
+      # lui, ZAP ne recevrait que des redirections et n'analyserait rien du tout.
+      ZAP_PROTOCOLE: >-
+        -config replacer.full_list(0).description=protocole
+        -config replacer.full_list(0).enabled=true
+        -config replacer.full_list(0).matchtype=REQ_HEADER
+        -config replacer.full_list(0).matchstr=X-Forwarded-Proto
+        -config replacer.full_list(0).regex=false
+        -config replacer.full_list(0).replacement=https
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Valeurs jetables, sans aucun secret réel : voir le fichier.
+      - name: Réglages de la pile analysée
+        run: cp deploy/env.scan-securite .env
+
+      - name: Monter la pile de production
+        run: |
+          # Réseau que Dokploy crée sur le serveur ; ici, c'est à nous de le faire.
+          docker network create dokploy-network
+          docker compose --file docker-compose.prod.yml up --build --detach
+
+          # La pile n'est prête qu'une fois les migrations passées et l'API saine. On
+          # interroge le site depuis le conteneur Nginx lui-même : toute la chaîne est
+          # ainsi éprouvée, sans publier le moindre port ni ajouter d'outil.
+          for _ in $(seq 90); do
+            if docker compose --file docker-compose.prod.yml exec -T web \
+                 wget --quiet --output-document=- --header="X-Forwarded-Proto: https" \
+                 http://127.0.0.1/api/health/ 2>/dev/null | grep -q '"ok"'; then
+              echo "Pile prête."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::La pile n'a pas démarré."
+          docker compose --file docker-compose.prod.yml logs --tail 40
+          exit 1
+
+      # Un service qui redémarre en boucle ne se voit pas depuis le site : l'API répond,
+      # mais plus aucune tâche n'aboutit, donc aucun livre acheté n'est préparé.
+      - name: Aucun service en échec
+        run: |
+          malades=$(docker ps --filter status=restarting --format '{{.Names}}')
+          if [ -n "$malades" ]; then
+            echo "::error::Services en redémarrage permanent : $malades"
+            for service in $malades; do docker logs --tail 30 "$service"; done
+            exit 1
+          fi
+          echo "Tous les services tiennent debout."
+
+      # Première passe : le site, tel qu'un visiteur le reçoit, à travers Nginx.
+      # `zap-baseline.py` le parcourt, puis applique les règles passives d'OWASP à chaque
+      # réponse — en-têtes, politique de sécurité, cookies, fuites d'information.
+      #
+      # ZAP est branché sur le réseau privé de la pile : rien n'est exposé sur la machine
+      # le temps de l'analyse.
+      - name: OWASP ZAP — le site
+        run: |
+          mkdir -p rapport && cp .zap/regles.tsv rapport/ && chmod -R 777 rapport
+          docker run --rm --network fasolib-scan_interne \
+            --volume "$PWD/rapport:/zap/wrk:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t http://web -c regles.tsv -J site.json -r site.html -I \
+            -z "$ZAP_PROTOCOLE"
+
+      # Seconde passe : l'API, pilotée par son propre schéma OpenAPI. Sans lui, ZAP ne
+      # trouverait rien : le site est une application React, dont l'araignée ne découvre
+      # aucune route d'API. Le scanner envoie ici de vraies charges hostiles — injection
+      # SQL, traversée de chemin, XSS — sur chacune des routes décrites.
+      #
+      # Il vise Django directement, et non Nginx : la limitation de débit répondrait 429
+      # dès la deuxième seconde et masquerait les failles au lieu de les révéler. Cette
+      # limitation est éprouvée à part, par la passe précédente et par les tests.
+      - name: OWASP ZAP — l'API
+        run: |
+          docker compose --file docker-compose.prod.yml exec -T api \
+            python manage.py spectacular --format openapi --file /tmp/schema.yml
+          docker compose --file docker-compose.prod.yml cp api:/tmp/schema.yml rapport/schema.yml
+          docker run --rm --network fasolib-scan_interne \
+            --volume "$PWD/rapport:/zap/wrk:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-api-scan.py -t schema.yml -f openapi -O http://api:8000 \
+            -c regles.tsv -J api.json -r api.html -I \
+            -z "$ZAP_PROTOCOLE"
+
+      # ZAP échoue sur toutes les alertes ou sur aucune : ce script tranche par niveau, et
+      # écarte les faux positifs déjà vérifiés. Les deux rapports sont jugés, même si le
+      # premier bloque : on veut voir l'ensemble en une seule exécution.
+      - name: Verdict
+        run: |
+          python .github/scripts/verdict_zap.py rapport/site.json || echec=1
+          python .github/scripts/verdict_zap.py rapport/api.json || echec=1
+          exit ${echec:-0}
+
+      - name: Rapports complets
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rapport-owasp-zap
+          path: |
+            rapport/site.*
+            rapport/api.*
+          retention-days: 30
+
+      - name: Démonter la pile
+        if: always()
+        run: docker compose --file docker-compose.prod.yml down --volumes

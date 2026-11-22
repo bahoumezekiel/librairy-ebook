@@ -22,7 +22,9 @@ FROM nginx:1-alpine
 # correspondance du protocole client doit y être lue avant le site, d'où le préfixe `00-`.
 # `common.conf` est rangé ailleurs : il n'a de sens qu'à l'intérieur d'un bloc `server`.
 COPY deploy/nginx/forwarded.conf /etc/nginx/conf.d/00-forwarded.conf
+COPY deploy/nginx/limites.conf /etc/nginx/conf.d/01-limites.conf
 COPY deploy/nginx/common.conf /etc/nginx/fasolib/common.conf
+COPY deploy/nginx/proxy-api.conf /etc/nginx/fasolib/proxy-api.conf
 COPY deploy/nginx/http.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 

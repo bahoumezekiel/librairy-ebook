@@ -1,0 +1,11 @@
+# Alertes d'OWASP ZAP volontairement ignorées, avec leur raison.
+#
+# Format, séparé par des tabulations :  <numéro de règle>	IGNORE	(explication)
+# Une ligne n'est ajoutée ici qu'après avoir vérifié que l'alerte ne s'applique pas à la
+# plateforme : ignorer une alerte sans l'avoir comprise revient à éteindre l'outil.
+#
+# Les alertes restées visibles ailleurs — par exemple « CSP: style-src unsafe-inline »,
+# qu'exigent les animations du site — ne sont pas ignorées : elles figurent dans chaque
+# rapport, sans bloquer, pour qu'on ne les oublie pas.
+
+90004	IGNORE	(Cross-Origin-Embedder-Policy : exiger require-corp bloquerait les couvertures, servies depuis le stockage objet, donc depuis une autre origine. Deviendra applicable quand ce stockage sera servi sous le domaine du site.)

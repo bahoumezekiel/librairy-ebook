@@ -14,9 +14,11 @@ contient à la fois l'espace public et le back-office de l'administrateur.
 2. [Comment elle est construite](#2-comment-elle-est-construite)
 3. [Organisation du dépôt](#3-organisation-du-dépôt)
 4. [Démarrer en développement](#4-démarrer-en-développement)
-5. [Déployer avec Dokploy, pas à pas](#5-déployer-avec-dokploy-pas-à-pas)
-6. [Après la mise en ligne](#6-après-la-mise-en-ligne)
-7. [Qualité du code](#7-qualité-du-code)
+5. [Déployer sur un VPS Hostinger, avec Dokploy](#5-déployer-sur-un-vps-hostinger-avec-dokploy)
+6. [Ce qui protège un paiement](#6-ce-qui-protège-un-paiement)
+7. [Le pipeline : contrôles et tests d'intrusion](#7-le-pipeline--contrôles-et-tests-dintrusion)
+8. [Après la mise en ligne](#8-après-la-mise-en-ligne)
+9. [Qualité du code](#9-qualité-du-code)
 
 ---
 
@@ -136,7 +138,7 @@ fasolib/
 │   │   ├── orders/               commandes, paiement, statistiques du tableau de bord
 │   │   ├── library/              achats, exemplaires chiffrés, licences d'appareil
 │   │   └── contact/              messages reçus, abonnés à la newsletter
-│   └── tests/                    175 tests (pytest)
+│   └── tests/                    188 tests (pytest)
 │
 ├── Frontend/                     le site React (espace public + back-office)
 │   ├── README.md                 installation et mise en route du site
@@ -159,9 +161,12 @@ fasolib/
 ├── deploy/
 │   ├── nginx/
 │   │   ├── forwarded.conf        protocole vu du client, transmis à Django
+│   │   ├── limites.conf          vraie adresse du client, et limitation du débit
 │   │   ├── common.conf           corps du serveur : routes, cache, en-têtes de sécurité
+│   │   ├── proxy-api.conf        transmission à l'API, commune aux trois routes
 │   │   ├── http.conf             serveur HTTP (celui qu'embarque l'image)
 │   │   └── https.conf            serveur HTTPS, pour un déploiement sans Dokploy
+│   ├── env.scan-securite         réglages jetables de la pile analysée par OWASP ZAP
 │   └── sauvegarde.sh             sauvegarde quotidienne : base et fichiers
 │
 ├── docs/
@@ -169,7 +174,14 @@ fasolib/
 │   ├── Cahier des charges…docx
 │   └── Document technique…docx
 │
-└── .github/workflows/ci.yml      contrôles automatiques : style, tests, types, compilation
+├── .zap/
+│   ├── regles.tsv                règles OWASP ZAP éteintes, chacune justifiée
+│   └── faux-positifs.tsv         occurrences écartées après vérification à la main
+│
+└── .github/
+    ├── workflows/ci.yml          à chaque envoi : style, tests, types, compilation
+    ├── workflows/securite.yml    failles connues et test d'intrusion OWASP ZAP
+    └── scripts/verdict_zap.py    verdict sur le rapport de ZAP, par niveau d'alerte
 ```
 
 Dans chaque application Django, les fichiers préfixés `admin_` (`admin_views.py`,
@@ -208,64 +220,106 @@ adresse à l'autre.
 
 ---
 
-## 5. Déployer avec Dokploy, pas à pas
+## 5. Déployer sur un VPS Hostinger, avec Dokploy
 
 [Dokploy](https://dokploy.com) installe sur votre serveur une interface qui déploie des
 applications Docker : il s'occupe du répartiteur (Traefik), des certificats HTTPS et des
-redéploiements. Le projet est déjà préparé pour lui — `docker-compose.prod.yml` est écrit
-dans ce sens et n'a pas à être modifié.
+redéploiements. Le projet est déjà écrit pour lui — `docker-compose.prod.yml` n'a pas à
+être modifié.
 
-Comptez une heure la première fois.
+Comptez une heure la première fois. Les onze étapes se suivent dans l'ordre.
 
 ### Avant de commencer
 
 | | |
 |---|---|
-| **Un serveur** | Ubuntu 24.04, **4 Go de mémoire** et 30 Go de disque. Dokploy demande 2 Go au minimum, mais la compilation du site sur le serveur en réclame davantage |
-| **Les ports 80, 443 et 3000 libres** | L'installation échoue si l'un d'eux est déjà pris |
-| **Un nom de domaine** | Avec un enregistrement `A` qui pointe vers l'adresse IP du serveur. Vérifiez-le avant d'aller plus loin : sans lui, Let's Encrypt ne délivrera aucun certificat |
-| **Le projet sur un dépôt Git** | GitHub, GitLab, Gitea… Dokploy y récupérera le code |
-| **Vos clés Genius Pay de production** | Pas celles du bac à sable |
+| **Un nom de domaine** | Chez n'importe quel registraire. Vous devez pouvoir y créer des enregistrements `A` |
+| **Vos clés Genius Pay de production** | Pas celles du bac à sable, qui doivent être révoquées |
+| **Un fournisseur d'e-mail** | Adresse SMTP, identifiant, mot de passe. Sans lui, l'API **refuse de démarrer** : un client ayant perdu son mot de passe ne pourrait plus se connecter |
+| **Le projet sur GitHub** | Dokploy y récupérera le code à chaque déploiement |
 
-### Étape 1 — Installer Dokploy
+### Étape 1 — Commander le serveur
 
-En SSH sur le serveur, en root :
+Dans hPanel, **VPS → Créer**. Les plans KVM, au jour où ces lignes sont écrites :
+
+| Plan | Processeur | Mémoire | Disque |
+|---|---|---|---|
+| KVM 1 | 1 cœur | 4 Go | 50 Go |
+| **KVM 2** *(conseillé)* | 2 cœurs | 8 Go | 100 Go |
+| KVM 4 | 4 cœurs | 16 Go | 200 Go |
+
+**Pourquoi KVM 2 plutôt que KVM 1.** C'est le serveur lui-même qui construit les images à
+chaque déploiement : il installe les dépendances Python, puis compile le site React. Sur un
+seul cœur avec 4 Go, cette compilation est longue et peut s'arrêter faute de mémoire,
+pendant que le site continue par ailleurs de servir les visiteurs. KVM 1 suffit si la
+plateforme reste petite, mais la marge de KVM 2 ne se paie qu'une fois.
+
+Au moment de la création :
+
+1. **Emplacement** — le centre de données le plus proche de vos lecteurs. Hostinger n'en
+   propose pas en Afrique : prenez l'Europe, c'est le plus court depuis le Burkina Faso.
+2. **Système** — onglet **OS with Panel**, puis **Ubuntu 24.04 with Dokploy**. Dokploy est
+   alors déjà installé : vous n'avez aucun script à lancer.
+3. **Accès** — ajoutez votre **clé SSH** plutôt qu'un mot de passe root.
+
+> Si vous avez pris une image Ubuntu nue, installez Dokploy à la main, en root :
+> `curl -sSL https://dokploy.com/install.sh | sh`
+
+### Étape 2 — Prendre la main sur Dokploy
+
+Ouvrez `http://ADRESSE-IP-DU-SERVEUR:3000` et **créez le compte administrateur tout de
+suite**. Le premier compte créé prend la main sur le serveur : tant qu'il n'existe pas,
+n'importe qui tombant sur cette adresse peut le créer à votre place.
+
+Refermez ensuite la porte :
+
+1. donnez un domaine à Dokploy lui-même (par exemple `dokploy.fasolib.bf`) dans
+   **Web Server → Domain** ;
+2. fermez le port 3000 : **Web Server → Server → Disable Port 3000** ;
+3. dans hPanel, **VPS → Pare-feu**, n'autorisez que **22** (SSH), **80** et **443**.
+
+L'interface qui commande votre serveur n'a pas à rester ouverte sur Internet.
+
+### Étape 3 — Faire pointer le domaine
+
+Chez votre registraire, deux enregistrements vers l'adresse IP du serveur :
+
+| Type | Nom | Valeur | TTL |
+|---|---|---|---|
+| `A` | `@` | l'adresse IP du VPS | 300 |
+| `A` | `www` | l'adresse IP du VPS | 300 |
+
+Vérifiez **avant d'aller plus loin** :
 
 ```bash
-curl -sSL https://dokploy.com/install.sh | sh
+dig +short fasolib.bf     # doit renvoyer l'adresse IP du serveur
 ```
 
-Le script installe Docker s'il manque, puis Dokploy et Traefik. À la fin, ouvrez
-`http://ADRESSE-IP-DU-SERVEUR:3000` dans votre navigateur et **créez le compte
-administrateur** — le premier compte créé prend la main, faites-le tout de suite.
+Tant que cette commande ne répond pas, Let's Encrypt ne délivrera aucun certificat, et
+l'étape 6 échouera sans que la cause soit évidente.
 
-> **Conseil.** Donnez ensuite un domaine à Dokploy lui-même (par exemple
-> `dokploy.fasolib.bf`) dans **Web Server → Domain**, puis fermez le port 3000 avec
-> **Web Server → Server → Disable Port 3000**. L'interface d'administration de votre
-> serveur n'a pas à rester ouverte sur Internet.
+### Étape 4 — Créer le projet et le service
 
-### Étape 2 — Créer le projet et le service
+Dans Dokploy :
 
-Dans l'interface de Dokploy :
-
-1. **Créez un projet**, nommez-le `fasolib`.
-2. Dans ce projet, **créez un service de type `Compose`**.
-3. Renseignez :
+1. **créez un projet**, nommez-le `fasolib` ;
+2. dans ce projet, **créez un service de type `Compose`** ;
+3. renseignez :
 
 | Champ | Valeur |
 |---|---|
 | **Compose Type** | `Docker Compose` |
-| **Provider** | `GitHub` (ou `Git` avec l'adresse du dépôt) |
+| **Provider** | `GitHub` |
 | **Repository** | votre dépôt FasoLib |
 | **Branch** | `main` |
 | **Compose Path** | `./docker-compose.prod.yml` |
 
-4. **Enregistrez.** Ne déployez pas encore : il manque les variables d'environnement.
+4. **enregistrez.** Ne déployez pas encore : il manque les variables d'environnement.
 
 > `Docker Compose` et non `Stack` : le mode Stack (Docker Swarm) ne sait pas construire
 > d'image à partir d'un `Dockerfile`, or le projet en construit deux.
 
-### Étape 3 — Renseigner les variables d'environnement
+### Étape 5 — Renseigner les variables d'environnement
 
 Onglet **Environment** du service. Collez ce bloc, puis remplacez ce qui est entre
 chevrons. Dokploy l'enregistre dans un fichier `.env` que la composition lit.
@@ -334,7 +388,7 @@ démarre pas, plutôt que de tourner en étant vulnérable :
   serveur, et un client ayant perdu son mot de passe ne pourrait plus se connecter ;
 - `DJANGO_ALLOWED_HOSTS` vide : toutes les requêtes sont refusées, l'oubli se voit aussitôt.
 
-### Étape 4 — Rattacher le domaine
+### Étape 6 — Rattacher le domaine
 
 Onglet **Domains** du service, bouton **Add Domain** :
 
@@ -356,7 +410,7 @@ porte sur Internet.
 > Le bouton **Preview Compose** montre le fichier final, avec les étiquettes Traefik que
 > Dokploy a ajoutées.
 
-### Étape 5 — Déployer
+### Étape 7 — Déployer
 
 Bouton **Deploy**, puis suivez l'onglet **Deployments**.
 
@@ -368,7 +422,7 @@ Au démarrage, un service `migrate` crée les tables et les espaces de stockage,
 s'arrête. Les autres ne démarrent qu'une fois cette étape réussie : si elle échoue, c'est
 là qu'il faut regarder.
 
-### Étape 6 — Créer le compte administrateur
+### Étape 8 — Créer le compte administrateur
 
 En SSH sur le serveur :
 
@@ -382,7 +436,7 @@ docker exec -it <nom-du-conteneur> python manage.py createsuperuser
 
 Ce compte ouvre le back-office, sur `https://fasolib.bf/admin/connexion`.
 
-### Étape 7 — Déclarer les notifications de paiement
+### Étape 9 — Déclarer les notifications de paiement
 
 Dans le tableau de bord Genius Pay, déclarez l'adresse de notification :
 
@@ -390,9 +444,9 @@ Dans le tableau de bord Genius Pay, déclarez l'adresse de notification :
 https://fasolib.bf/geniuspay/webhook/
 ```
 
-et reportez le secret associé dans `GENIUSPAY_WEBHOOK_SECRET` (étape 3), puis redéployez.
+et reportez le secret associé dans `GENIUSPAY_WEBHOOK_SECRET` (étape 5), puis redéployez.
 
-### Étape 8 — Vérifier
+### Étape 10 — Vérifier
 
 ```bash
 curl https://fasolib.bf/api/health/
@@ -414,29 +468,190 @@ stockage d'images, sinon le navigateur les bloquera. [EXPLOITATION.md](docs/EXPL
 explique aussi comment servir ce stockage sous votre propre domaine, ce qui supprime cette
 ligne et rend les couvertures disponibles hors ligne.
 
-### Étape 9 — Redéployer à chaque modification
+### Étape 11 — Redéployer à chaque modification
 
 Activez **Auto Deploy** dans l'onglet **General**, puis déclarez l'adresse de rappel
-(*Webhook URL*, visible dans les journaux de déploiement) chez votre hébergeur Git. Chaque
-envoi sur la branche `main` relance alors le déploiement tout seul.
+(*Webhook URL*, visible dans les journaux de déploiement) chez GitHub, dans
+**Settings → Webhooks**. Chaque envoi sur `main` relance alors le déploiement tout seul.
+
+La branche déclarée dans Dokploy doit être celle que vous poussez, sans quoi le
+déploiement s'arrête sur « Branch Not Match ».
 
 Les migrations s'appliquent automatiquement avant que l'API ne reprenne les requêtes.
+
+> **Aucun fichier du dépôt n'est monté dans un conteneur**, et c'est voulu : à chaque
+> déploiement, Dokploy vide le dossier puis refait un `git clone`. Un fichier monté depuis
+> `./` disparaîtrait en route. Les configurations Nginx sont donc **intégrées aux images**
+> au moment de leur construction, et les données vivent dans des volumes Docker nommés,
+> que rien n'efface.
 
 ### Pièges à éviter
 
 | Symptôme | Cause | Solution |
 |---|---|---|
-| L'installation de Dokploy échoue | Un port 80, 443 ou 3000 déjà pris | `ss -tlnp \| grep -E ':(80\|443\|3000)'`, puis arrêtez le service fautif |
-| Le site boucle en redirections | `X-Forwarded-Proto` perdu en route | Le projet le gère ([`forwarded.conf`](deploy/nginx/forwarded.conf)) ; vérifiez que vous n'avez pas ajouté un autre proxy devant |
+| L'installation de Dokploy échoue | Un port 80, 443 ou 3000 déjà pris | Repérez le service fautif avec `ss -tlnp`, puis arrêtez-le |
+| Le site boucle en redirections | `X-Forwarded-Proto` perdu en route | Le projet le gère ([`forwarded.conf`](deploy/nginx/forwarded.conf)) ; vérifiez qu'aucun autre proxy n'a été ajouté devant |
 | Tous les visiteurs partagent la limite de connexion | `NUM_PROXIES` mal réglé | Mettez `2` derrière Dokploy |
 | Pas de certificat HTTPS | Le domaine ne pointe pas encore vers le serveur | `dig +short fasolib.bf`, attendez la propagation DNS, puis redéployez |
 | Les couvertures ne s'affichent pas | Domaine du stockage absent de la politique de sécurité | Corrigez `img-src` dans `deploy/nginx/common.conf` |
-| Le serveur se fige pendant un déploiement | Pas assez de mémoire pour compiler | Passez à 4 Go, ou construisez les images en intégration continue et poussez-les dans un registre |
+| Le serveur se fige pendant un déploiement | Pas assez de mémoire pour compiler | Passez à KVM 2, ou construisez les images ailleurs |
 | « Votre exemplaire est en préparation » sans fin | Le service `worker` ne tourne pas | Regardez ses journaux dans Dokploy |
 
 ---
 
-## 6. Après la mise en ligne
+## 6. Ce qui protège un paiement
+
+Un paiement met en jeu de l'argent réel et l'accès à un livre : c'est la partie la plus
+convoitée de la plateforme. La défense n'y repose pas sur une barrière unique, mais sur
+une suite de vérifications dont chacune suffirait, seule, à faire échouer l'attaque.
+
+| Ce qu'un attaquant tenterait | Ce qui l'en empêche |
+|---|---|
+| Payer 100 F un livre à 5 000 F | Le prix n'est **jamais** lu dans la requête : la commande est créée à partir du prix du livre en base |
+| Annoncer un paiement qui n'a pas eu lieu | Aucune notification n'accorde de livre : le paiement est **relu auprès de Genius Pay** avant toute décision (voir [§ 2](#un-paiement-nest-jamais-cru-sur-parole)) |
+| Falsifier une notification | Le SDK vérifie la **signature HMAC-SHA256** et l'horodatage avant même que notre code ne la voie |
+| Rejouer une notification valide | Chaque notification porte un identifiant unique, enregistré : la seconde fois, elle est ignorée |
+| Payer une fois, être servi deux fois | La commande est verrouillée en base le temps d'être conclue (`select_for_update`) |
+| Doubler un paiement en cliquant deux fois | Une commande du même livre encore en attente est **reprise**, jamais doublée |
+| Payer deux fois le même livre malgré tout | Le second paiement est refusé et **journalisé comme à rembourser**, au lieu d'accorder le livre deux fois |
+| Noyer le serveur sous de fausses notifications | Nginx limite à 60 notifications par minute et par adresse, avant que Django ne soit sollicité |
+| Essayer des mots de passe en masse | 20 tentatives par minute et par adresse chez Nginx, puis une limite plus fine côté Django |
+| Activer le paiement simulé en production | `GENIUSPAY_SIMULATION=True` avec `DJANGO_DEBUG=False` **empêche l'API de démarrer** |
+
+Deux de ces défenses méritent une précision, car elles se règlent mal.
+
+**La vraie adresse du client.** Derrière Traefik, toutes les requêtes se présentent avec
+l'adresse du répartiteur. Une limitation par adresse punirait alors tous les visiteurs
+ensemble, et les journaux ne diraient jamais qui fait quoi.
+[`limites.conf`](deploy/nginx/limites.conf) rétablit l'adresse d'origine, en ne faisant
+confiance qu'aux réseaux privés : aucun visiteur ne peut s'inventer une autre adresse,
+puisque personne ne joint ce conteneur directement.
+
+**Les secrets.** Ils ne sont nulle part dans le dépôt : ni dans le code, ni dans les
+images, ni dans un fichier d'exemple. Ils vivent dans l'onglet **Environment** de Dokploy,
+et c'est tout. Un dépôt rendu public demain ne livrerait rien.
+
+---
+
+## 7. Le pipeline : contrôles et tests d'intrusion
+
+Deux chaînes tournent chez GitHub, pour deux questions différentes.
+
+| Chaîne | Quand | Ce qu'elle vérifie |
+|---|---|---|
+| [**Contrôles**](.github/workflows/ci.yml) | à chaque envoi et à chaque proposition de modification | Style du code, configuration de production, 188 tests, types du site, compilation |
+| [**Sécurité**](.github/workflows/securite.yml) | à chaque envoi sur `main`, **chaque lundi**, et à la demande | Failles connues des bibliothèques, puis test d'intrusion OWASP ZAP |
+
+Le passage hebdomadaire n'est pas une redite : une faille publiée demain touche un code
+qui, lui, n'a pas bougé. C'est tout l'intérêt de répéter l'analyse dans le temps.
+
+### Les failles connues des bibliothèques
+
+`pip-audit`, l'outil de la fondation Python, compare les versions installées à la base
+publique des vulnérabilités. Côté site, `npm audit` fait de même, en n'arrêtant la chaîne
+que sur les failles **élevées et critiques** : l'écosystème npm en signale beaucoup qui ne
+concernent que des outils de compilation, jamais exécutés chez le visiteur.
+
+> **Une correction imposée, et pourquoi.** Le lecteur EPUB (`epubjs`) s'appuie sur
+> l'analyseur XML `@xmldom/xmldom`, dont la version entraînée était vulnérable. La
+> correction proposée par `npm audit` — passer à `epubjs@0.4.2` — était un piège : malgré
+> son numéro, cette version est **plus ancienne** que celle employée et dépend d'un
+> analyseur encore plus exposé. Le `overrides` du `package.json` impose donc
+> `@xmldom/xmldom@^0.8.15`, hors de toutes les plages signalées. Lecture d'un EPUB
+> vérifiée ensuite dans un navigateur : manifeste lu, chapitre affiché.
+
+### Le test d'intrusion OWASP ZAP
+
+[OWASP ZAP](https://www.zaproxy.org/) est l'outil libre de référence pour éprouver une
+application web. Ici, il n'attaque ni une maquette ni le site en production, mais **la
+vraie pile de production** : mêmes images, même Nginx, même Gunicorn, montée pour
+l'occasion sur une base vide, puis détruite avec ses volumes.
+
+Le déroulement :
+
+1. la pile est construite à partir de `docker-compose.prod.yml` ;
+2. une vérification s'assure qu'**aucun service ne redémarre en boucle** — un worker mort
+   ne se voit pas depuis le site, mais plus aucun livre acheté ne serait préparé ;
+3. **le site est parcouru** à travers Nginx, et chaque réponse passe au crible des règles
+   passives d'OWASP : en-têtes, politique de sécurité, cookies, fuites d'information ;
+4. **l'API est attaquée** route par route, avec de vraies charges hostiles — injection
+   SQL, traversée de chemin, XSS ;
+5. les deux rapports sont conservés **30 jours** comme fichiers joints à l'exécution.
+
+**Pourquoi deux passes, et non une.** Le site est une application React : l'araignée de
+ZAP n'y découvre aucune adresse d'API, car rien n'y est écrit en clair dans le HTML. La
+seconde passe est donc pilotée par le **schéma OpenAPI** que l'API produit elle-même — 75
+adresses, décrites par le code, jamais par une liste à tenir à jour.
+
+**Pourquoi l'API est visée directement, sans passer par Nginx.** Un scanner actif envoie
+des milliers de requêtes : la limitation de débit répondrait 429 dès la deuxième seconde,
+et masquerait les failles applicatives au lieu de les révéler. Cette limitation, elle, est
+éprouvée par la première passe et par les tests. Chaque défense est ainsi mesurée là où
+elle agit.
+
+**Ce qui bloque la mise en production.** ZAP ne sait qu'échouer sur toutes les alertes ou
+sur aucune. [`verdict_zap.py`](.github/scripts/verdict_zap.py) tranche à sa place : une
+alerte **élevée** arrête la chaîne, les alertes moyennes et faibles sont résumées dans le
+compte rendu de l'exécution, sans bloquer.
+
+### Écarter une alerte, sans désarmer l'outil
+
+Deux fichiers, et la différence entre les deux compte.
+
+| Fichier | Portée | Quand s'en servir |
+|---|---|---|
+| [`.zap/regles.tsv`](.zap/regles.tsv) | Éteint **une règle entière** | Une règle sans objet ici, par exemple un en-tête qui casserait l'affichage des couvertures |
+| [`.zap/faux-positifs.tsv`](.zap/faux-positifs.tsv) | Écarte **une occurrence précise** : règle, méthode, adresse, paramètre | Une alerte vérifiée à la main et comprise comme fausse |
+
+Une injection SQL ne s'éteint jamais par la première voie. Les trois occurrences écartées
+aujourd'hui l'ont été une à une, avec la vérification qui les accompagne : aucune requête
+SQL brute dans le projet, charge rejouée à la main et refusée à la validation, et un
+`DROP TABLE` envoyé pour de bon qui n'a rien détruit. La même règle, sur une autre adresse
+ou un autre paramètre, bloque toujours.
+
+### Rejouer l'analyse chez soi
+
+La chaîne ne fait rien d'autre que ces commandes : un échec se reproduit donc à
+l'identique sur votre machine, sans rien deviner.
+
+```bash
+cp deploy/env.scan-securite .env          # écrase votre .env : à restaurer ensuite
+docker network create dokploy-network
+export COMPOSE_PROJECT_NAME=fasolib-scan
+docker compose --file docker-compose.prod.yml up --build --detach
+
+mkdir -p rapport && cp .zap/regles.tsv rapport/ && chmod -R 777 rapport
+ZAP=ghcr.io/zaproxy/zaproxy:stable
+PROTO="-config replacer.full_list(0).description=protocole \
+-config replacer.full_list(0).enabled=true \
+-config replacer.full_list(0).matchtype=REQ_HEADER \
+-config replacer.full_list(0).matchstr=X-Forwarded-Proto \
+-config replacer.full_list(0).regex=false \
+-config replacer.full_list(0).replacement=https"
+
+# 1. Le site, à travers Nginx
+docker run --rm --network fasolib-scan_interne --volume "$PWD/rapport:/zap/wrk:rw" $ZAP \
+  zap-baseline.py -t http://web -c regles.tsv -J site.json -r site.html -I -z "$PROTO"
+
+# 2. L'API, pilotée par son schéma
+docker compose --file docker-compose.prod.yml exec -T api \
+  python manage.py spectacular --format openapi --file /tmp/schema.yml
+docker compose --file docker-compose.prod.yml cp api:/tmp/schema.yml rapport/schema.yml
+docker run --rm --network fasolib-scan_interne --volume "$PWD/rapport:/zap/wrk:rw" $ZAP \
+  zap-api-scan.py -t schema.yml -f openapi -O http://api:8000 \
+  -c regles.tsv -J api.json -r api.html -I -z "$PROTO"
+
+python .github/scripts/verdict_zap.py rapport/site.json
+python .github/scripts/verdict_zap.py rapport/api.json
+
+docker compose --file docker-compose.prod.yml down --volumes
+```
+
+Les rapports lisibles sont `rapport/site.html` et `rapport/api.html`.
+
+---
+
+## 8. Après la mise en ligne
 
 **[docs/EXPLOITATION.md](docs/EXPLOITATION.md)** prend le relais : sauvegardes de la base
 et des fichiers, surveillance et lecture des journaux, mises à jour, dépannage, liste de
@@ -445,7 +660,7 @@ sans Dokploy.
 
 ---
 
-## 7. Qualité du code
+## 9. Qualité du code
 
 ```bash
 # API : style, configuration de production, tests
@@ -460,7 +675,8 @@ npm run build
 ```
 
 Ces mêmes contrôles tournent à chaque envoi de code
-([.github/workflows/ci.yml](.github/workflows/ci.yml)).
+([.github/workflows/ci.yml](.github/workflows/ci.yml)), et les contrôles de sécurité
+s'y ajoutent chaque semaine ([§ 7](#7-le-pipeline--contrôles-et-tests-dintrusion)).
 
 ### Conventions suivies
 

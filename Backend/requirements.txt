@@ -11,6 +11,10 @@ djangorestframework-simplejwt==5.5.1
 drf-spectacular==0.30.0
 geniuspay==1.2.2
 gunicorn==27.0.1
+# Importé par le transport Redis de kombu (celery), qui ne le déclare pas dans ses
+# dépendances. Sans cette ligne, l'image de production s'installe sans erreur, puis
+# aucune tâche ne part : le worker redémarre en boucle et l'API échoue à publier.
+packaging==26.3
 pillow==13.0.0
 psycopg2-binary==2.9.13
 pypdf==7.0.1
