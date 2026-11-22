@@ -159,16 +159,15 @@ def test_filters_combine(api_client, make_book):
 # --- Téléchargement -----------------------------------------------------------
 
 
-def test_free_book_downloads_through_a_signed_url(api_client, make_book):
+def test_free_book_is_handed_over_by_the_api(api_client, make_book):
+    """Le fichier est relayé par l'API : le stockage objet reste hors d'atteinte."""
     book = make_book()
 
     response = api_client.get(f"/api/books/{book.slug}/download/")
 
-    assert response.status_code == 302
-    assert "X-Amz-Signature" in response.url
-    download = requests.get(response.url, timeout=10)
-    assert download.content == BOOK_CONTENT
-    assert f'filename="{book.slug}.pdf"' in download.headers["Content-Disposition"]
+    assert response.status_code == 200
+    assert b"".join(response.streaming_content) == BOOK_CONTENT
+    assert f'filename="{book.slug}.pdf"' in response.headers["Content-Disposition"]
 
 
 def test_book_file_is_not_readable_without_signature(make_book):

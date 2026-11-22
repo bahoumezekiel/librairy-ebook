@@ -7,6 +7,7 @@ d'environnement (fichier `.env` à la racine du dépôt, voir `.env.example`).
 
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import urlparse
 
 from decouple import Csv, config
 from django.core.exceptions import ImproperlyConfigured
@@ -19,17 +20,27 @@ SECRET_KEY = config("DJANGO_SECRET_KEY")
 DEBUG = config("DJANGO_DEBUG", default=False, cast=bool)
 ALLOWED_HOSTS = config("DJANGO_ALLOWED_HOSTS", default="", cast=Csv())
 
+# Adresse publique de la plateforme, site et API confondus. Elle sert au retour de Genius
+# Pay, aux liens de réinitialisation du mot de passe, et aux URL des couvertures.
+FRONTEND_URL = config("FRONTEND_URL")
+
 if not DEBUG:
     # En production, Nginx termine le HTTPS et transmet le schéma d'origine.
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
     SECURE_SSL_REDIRECT = True
     SECURE_HSTS_SECONDS = 31_536_000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_PRELOAD = True
+    # Pas de `preload` : cette mention engage le domaine entier, que la plateforme peut
+    # partager avec d'autres sites. L'annoncer forcerait le HTTPS sur tous les
+    # sous-domaines de son propriétaire, ce que ce projet n'a pas à décider pour lui.
 
 # Pas de middleware CSRF : l'API s'authentifie par jeton dans l'en-tête Authorization,
 # et le seul cookie (renouvellement) est en SameSite=Strict, donc jamais envoyé par un autre site.
-SILENCED_SYSTEM_CHECKS = ["security.W003"]
+SILENCED_SYSTEM_CHECKS = [
+    "security.W003",
+    # W021 réclame `SECURE_HSTS_PRELOAD` : voir la raison plus haut.
+    "security.W021",
+]
 
 # Seul le site React peut appeler l'API depuis un navigateur, cookie compris.
 CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", default="", cast=Csv())
@@ -106,9 +117,39 @@ _S3_OPTIONS = {
     "file_overwrite": False,
 }
 
+# Chemin sous lequel Nginx relaie le stockage public (deploy/nginx/common.conf). C'est
+# aussi le nom du compartiment : l'adresse d'une couverture est alors la même des deux
+# côtés du relais, et rien n'a à être réécrit en chemin.
+_MEDIA_PATH = "media"
+
+_S3_PUBLIC_OPTIONS = {
+    **_S3_OPTIONS,
+    "bucket_name": config("S3_PUBLIC_BUCKET"),
+    "querystring_auth": False,
+}
+
+# Hors développement, le stockage objet n'est joignable que depuis le réseau privé de la
+# composition : aucun navigateur ne peut l'atteindre. Les couvertures passent donc par
+# Nginx, sous le domaine du site. En développement, le navigateur y accède directement.
+if not DEBUG:
+    if _S3_PUBLIC_OPTIONS["bucket_name"] != _MEDIA_PATH:
+        raise ImproperlyConfigured(
+            f"S3_PUBLIC_BUCKET doit valoir « {_MEDIA_PATH} » : c'est le chemin sous lequel "
+            "Nginx sert les couvertures. Un autre nom les ferait toutes disparaître."
+        )
+    _site = urlparse(FRONTEND_URL)
+    if not _site.netloc:
+        raise ImproperlyConfigured(
+            "FRONTEND_URL doit être une adresse complète, schéma compris : https://exemple.com"
+        )
+    _S3_PUBLIC_OPTIONS["url_protocol"] = f"{_site.scheme}:"
+    _S3_PUBLIC_OPTIONS["custom_domain"] = f"{_site.netloc}/{_MEDIA_PATH}"
+
 # Privé par défaut : seul ce qui est rangé explicitement dans « public » est exposé.
 STORAGES = {
-    # Livres : aucune URL publique, uniquement des URL signées valables 5 minutes.
+    # Livres : aucune adresse publique. L'API les transmet elle-même, après avoir vérifié
+    # le droit d'y accéder. Une URL signée qui serait produite malgré tout — par un script
+    # d'administration, par exemple — n'aurait que cinq minutes de validité.
     "default": {
         "BACKEND": "storages.backends.s3.S3Storage",
         "OPTIONS": {
@@ -120,11 +161,7 @@ STORAGES = {
     # Couvertures : lisibles par tous, URL stables et sans signature.
     "public": {
         "BACKEND": "storages.backends.s3.S3Storage",
-        "OPTIONS": {
-            **_S3_OPTIONS,
-            "bucket_name": config("S3_PUBLIC_BUCKET"),
-            "querystring_auth": False,
-        },
+        "OPTIONS": _S3_PUBLIC_OPTIONS,
     },
 }
 
@@ -226,9 +263,6 @@ SIMPLE_JWT = {
 
 # Devise unique de la plateforme : tous les prix sont en francs CFA.
 CURRENCY = "XOF"
-
-# Adresse du site React, vers lequel Genius Pay renvoie le client après le paiement.
-FRONTEND_URL = config("FRONTEND_URL")
 
 # Paiement simulé (apps/orders/simulation.py) : pour développer sans clés Genius Pay.
 # Il accorderait des livres sans paiement réel, donc il est interdit hors mode DEBUG.

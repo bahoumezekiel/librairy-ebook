@@ -4,11 +4,8 @@
 # c'est Traefik — le répartiteur de Dokploy — qui les occupe et qui délivre le certificat
 # HTTPS. Vous rattachez le domaine au seul service `web`, sur le port 80 du conteneur.
 #
-# Pour un déploiement à la main, sans Dokploy, voir docs/EXPLOITATION.md : deux lignes
-# à changer suffisent.
-#
-# Les valeurs sensibles viennent des variables d'environnement (onglet « Environment »
-# de Dokploy, ou fichier .env à la racine pour un déploiement à la main).
+# Les valeurs sensibles viennent des variables d'environnement : onglet « Environment »
+# de Dokploy, qui les écrit dans un fichier .env lu par cette composition.
 
 x-api: &api
   build:

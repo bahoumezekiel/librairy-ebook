@@ -37,13 +37,12 @@ export default defineConfig({
         navigateFallbackDenylist: [/^\/api\//, /^\/geniuspay\//],
         runtimeCaching: [
           {
-            // Images du site, gardées pour s'afficher sans réseau.
+            // Images du site, gardées pour s'afficher sans réseau — les couvertures
+            // comprises, puisque Nginx les sert sous /media/, donc sur notre origine.
             //
-            // Uniquement celles de notre origine. Une couverture servie par le stockage
-            // objet, sur une autre origine, doit être laissée au navigateur : reprise par
-            // le service worker, elle est redemandée sans l'autorisation d'origine voulue
-            // et plus aucune couverture ne s'affiche. Pour les garder hors ligne aussi,
-            // faites servir le stockage sous le même domaine (voir docs/EXPLOITATION.md).
+            // La condition `sameOrigin` reste nécessaire : une image venue d'ailleurs,
+            // reprise par le service worker, serait redemandée sans l'autorisation
+            // d'origine voulue, et ne s'afficherait plus du tout.
             urlPattern: ({ request, sameOrigin }) =>
               sameOrigin && request.destination === "image",
             handler: "CacheFirst",
@@ -56,7 +55,7 @@ export default defineConfig({
           {
             // Catalogue public : réseau d'abord, dernière version connue sans réseau.
             // Seules la liste et la fiche d'un livre sont gardées ; les sous-routes
-            // (note du client, téléchargement signé) ne doivent jamais être mises en cache.
+            // (note du client, téléchargement) ne doivent jamais être mises en cache.
             urlPattern: ({ url }) => /^\/api\/(books|categories)\/([^/]+\/)?$/.test(url.pathname),
             handler: "NetworkFirst",
             options: {

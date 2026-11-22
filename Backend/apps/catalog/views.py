@@ -2,10 +2,11 @@
 
 from datetime import timedelta
 
-from django.http import HttpResponseRedirect
+from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
+from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status, viewsets
 from rest_framework.decorators import action
@@ -49,22 +50,23 @@ class BookViewSet(viewsets.ReadOnlyModelViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_class = BookFilter
 
-    @extend_schema(responses={302: None})
+    @extend_schema(responses={(200, "application/octet-stream"): OpenApiTypes.BINARY})
     @action(detail=True)
     def download(self, request, slug=None):
-        """Redirige vers une URL signée de courte durée. Réservé aux livres gratuits."""
+        """Transmet le fichier du livre. Réservé aux livres gratuits.
+
+        L'API relaie le fichier au lieu de renvoyer le client vers le stockage objet :
+        celui-ci n'est joignable que depuis le réseau privé de la composition, et il n'a
+        pas à en sortir. C'est aussi ainsi qu'un livre acheté est remis (apps.library).
+        """
         book = self.get_object()
         if not book.is_free:
             raise PermissionDenied("Ce livre est payant : il ne peut pas être téléchargé.")
-        filename = f"{book.slug}.{book.format}"
-        url = book.file.storage.url(
-            book.file.name,
-            parameters={"ResponseContentDisposition": f'attachment; filename="{filename}"'},
+        return FileResponse(
+            book.file.open("rb"),
+            as_attachment=True,
+            filename=f"{book.slug}.{book.format}",
         )
-        response = HttpResponseRedirect(url)
-        # L'adresse signée expire en quelques minutes : aucun cache ne doit la conserver.
-        response["Cache-Control"] = "private, no-store"
-        return response
 
     @action(
         detail=True,

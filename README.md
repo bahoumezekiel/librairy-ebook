@@ -92,6 +92,12 @@ texte non sélectionnable, filigrane nominatif.
 la session repose sur un cookie `SameSite=Strict`, qui n'est jamais envoyé vers un autre
 site. C'est Nginx qui réunit les deux sous la même adresse.
 
+**Les couvertures aussi.** Nginx relaie le stockage objet sous `/media/` : les images
+viennent du domaine du site, et le stockage ne quitte jamais le réseau privé de la
+composition — aucun navigateur ne peut l'atteindre. Les livres, eux, sont remis par
+l'API : gratuits comme achetés, ils passent par une porte qui vérifie le droit d'y
+accéder.
+
 ### Les techniques retenues
 
 | Partie | Outils |
@@ -164,8 +170,7 @@ fasolib/
 │   │   ├── limites.conf          vraie adresse du client, et limitation du débit
 │   │   ├── common.conf           corps du serveur : routes, cache, en-têtes de sécurité
 │   │   ├── proxy-api.conf        transmission à l'API, commune aux trois routes
-│   │   ├── http.conf             serveur HTTP (celui qu'embarque l'image)
-│   │   └── https.conf            serveur HTTPS, pour un déploiement sans Dokploy
+│   │   └── http.conf             le serveur qu'embarque l'image (Traefik fait le HTTPS)
 │   ├── env.scan-securite         réglages jetables de la pile analysée par OWASP ZAP
 │   └── sauvegarde.sh             sauvegarde quotidienne : base et fichiers
 │
@@ -233,7 +238,7 @@ Comptez une heure la première fois. Les onze étapes se suivent dans l'ordre.
 
 | | |
 |---|---|
-| **Un nom de domaine** | Chez n'importe quel registraire. Vous devez pouvoir y créer des enregistrements `A` |
+| **Un nom de domaine** | Ou un sous-domaine d'un domaine que vous possédez déjà : un enregistrement `A` suffit. Dans ce guide, la plateforme vit sur `fasolib.e-busness.cloud` |
 | **Vos clés Genius Pay de production** | Pas celles du bac à sable, qui doivent être révoquées |
 | **Un fournisseur d'e-mail** | Adresse SMTP, identifiant, mot de passe. Sans lui, l'API **refuse de démarrer** : un client ayant perdu son mot de passe ne pourrait plus se connecter |
 | **Le projet sur GitHub** | Dokploy y récupérera le code à chaque déploiement |
@@ -273,30 +278,58 @@ n'importe qui tombant sur cette adresse peut le créer à votre place.
 
 Refermez ensuite la porte :
 
-1. donnez un domaine à Dokploy lui-même (par exemple `dokploy.fasolib.bf`) dans
+1. donnez un domaine à Dokploy lui-même — `panel.e-busness.cloud` — dans
    **Web Server → Domain** ;
 2. fermez le port 3000 : **Web Server → Server → Disable Port 3000** ;
 3. dans hPanel, **VPS → Pare-feu**, n'autorisez que **22** (SSH), **80** et **443**.
 
 L'interface qui commande votre serveur n'a pas à rester ouverte sur Internet.
 
-### Étape 3 — Faire pointer le domaine
+### Étape 3 — Faire pointer le sous-domaine
 
-Chez votre registraire, deux enregistrements vers l'adresse IP du serveur :
+FasoLib s'installe sur un **sous-domaine** d'un domaine déjà utilisé :
+`fasolib.e-busness.cloud`. Les autres enregistrements ne bougent pas, et le site déjà en
+ligne sur `e-busness.cloud` continue de répondre exactement comme avant.
 
-| Type | Nom | Valeur | TTL |
-|---|---|---|---|
-| `A` | `@` | l'adresse IP du VPS | 300 |
-| `A` | `www` | l'adresse IP du VPS | 300 |
+| Type | Nom | Valeur | | |
+|---|---|---|---|---|
+| `A` | `fasolib` | l'adresse IP du VPS | TTL 300 | **à créer** |
+| `A` | `@`, `www` | votre site actuel | | à ne pas toucher |
+| `CAA` | `@` | `0 issue "letsencrypt.org"` | | déjà là, et indispensable |
 
 Vérifiez **avant d'aller plus loin** :
 
 ```bash
-dig +short fasolib.bf     # doit renvoyer l'adresse IP du serveur
+dig +short fasolib.e-busness.cloud
+# attendu : l'adresse IP du VPS
+
+curl -I http://fasolib.e-busness.cloud/
+# attendu : 404. Traefik écoute déjà pour votre autre site, mais ne connaît pas encore
+# ce nom : c'est l'étape 6 qui le lui apprendra.
 ```
 
-Tant que cette commande ne répond pas, Let's Encrypt ne délivrera aucun certificat, et
-l'étape 6 échouera sans que la cause soit évidente.
+Trois choses tiennent au fait que ce soit un sous-domaine.
+
+**L'enregistrement `CAA` vaut pour tout le domaine, sous-domaines compris.** Le vôtre,
+`0 issue "letsencrypt.org"`, autorise Let's Encrypt — et lui seul — à émettre un
+certificat. C'est précisément l'autorité qu'emploie Dokploy : rien à changer. Mais si cet
+enregistrement venait à nommer un autre émetteur, l'étape 6 échouerait sans message clair.
+
+**Le HSTS du domaine principal s'applique ici aussi.** `e-busness.cloud` répond avec
+`Strict-Transport-Security … includeSubDomains` : tout navigateur l'ayant déjà visité
+refusera le HTTP en clair sur `fasolib.e-busness.cloud`. Deux conséquences — ne testez pas
+en `http://`, et ne communiquez l'adresse qu'une fois le certificat délivré. Un certificat
+manquant ne donne pas, ici, un avertissement que l'on contourne d'un clic : il donne une
+porte close.
+
+**Le sous-domaine suffit, seul.** Pas de `www.fasolib`, et rien à ajouter sur `@`.
+L'`ALLOWED_HOSTS` de l'étape 5 ne contiendra donc qu'un seul nom.
+
+> **Un serveur, deux sites.** Traefik les distingue par le nom demandé : ni conflit de
+> port, ni certificat à partager, et le réseau `dokploy-network` existe déjà. Ce qui se
+> partage vraiment, c'est la mémoire. FasoLib ajoute sept conteneurs, et la compilation du
+> site React est le moment le plus gourmand : sur un serveur déjà chargé, lancez le premier
+> déploiement à une heure creuse, `docker stats` ouvert à côté.
 
 ### Étape 4 — Créer le projet et le service
 
@@ -328,9 +361,9 @@ chevrons. Dokploy l'enregistre dans un fichier `.env` que la composition lit.
 # --- Django -------------------------------------------------------------
 DJANGO_SECRET_KEY=<clé générée, voir plus bas>
 DJANGO_DEBUG=False
-DJANGO_ALLOWED_HOSTS=fasolib.bf,www.fasolib.bf
-CORS_ALLOWED_ORIGINS=https://fasolib.bf
-FRONTEND_URL=https://fasolib.bf
+DJANGO_ALLOWED_HOSTS=fasolib.e-busness.cloud
+CORS_ALLOWED_ORIGINS=https://fasolib.e-busness.cloud
+FRONTEND_URL=https://fasolib.e-busness.cloud
 NUM_PROXIES=2
 
 # --- Services internes --------------------------------------------------
@@ -347,7 +380,9 @@ CELERY_BROKER_URL=redis://redis:6379/1
 S3_ENDPOINT_URL=http://s3:7070
 S3_REGION=us-east-1
 S3_PRIVATE_BUCKET=fasolib-prive
-S3_PUBLIC_BUCKET=fasolib-public
+# « media » n'est pas un nom libre : c'est aussi le chemin sous lequel Nginx sert les
+# couvertures. L'API refuse de démarrer avec un autre nom, plutôt que de les perdre toutes.
+S3_PUBLIC_BUCKET=media
 S3_ACCESS_KEY=fasolib
 S3_SECRET_KEY=<mot de passe long, tiré au hasard>
 
@@ -357,7 +392,7 @@ EMAIL_PORT=587
 EMAIL_HOST_USER=<identifiant SMTP>
 EMAIL_HOST_PASSWORD=<mot de passe SMTP>
 EMAIL_USE_TLS=True
-DEFAULT_FROM_EMAIL=FasoLib <ne-pas-repondre@fasolib.bf>
+DEFAULT_FROM_EMAIL=FasoLib <ne-pas-repondre@e-busness.cloud>
 
 # --- Paiement -----------------------------------------------------------
 GENIUSPAY_API_KEY=<clé de production>
@@ -377,8 +412,8 @@ présentent devant Django : Traefik, puis Nginx. Ce chiffre lui dit où retrouve
 adresse du client. Trop bas, tous vos visiteurs partageraient la même limite de tentatives
 de connexion ; trop haut, la limite ne s'appliquerait plus à personne.
 
-Quatre protections refusent de laisser passer une mauvaise configuration — l'API ne
-démarre pas, plutôt que de tourner en étant vulnérable :
+Cinq protections refusent de laisser passer une mauvaise configuration — l'API ne
+démarre pas, plutôt que de tourner en étant vulnérable, ou visiblement cassée :
 
 - `GENIUSPAY_SIMULATION=True` avec `DJANGO_DEBUG=False` : le paiement simulé accorderait
   des livres sans paiement réel ;
@@ -386,7 +421,9 @@ démarre pas, plutôt que de tourner en étant vulnérable :
   acceptées sans vérification de signature ;
 - `EMAIL_HOST` vide : les liens de réinitialisation partiraient dans la console du
   serveur, et un client ayant perdu son mot de passe ne pourrait plus se connecter ;
-- `DJANGO_ALLOWED_HOSTS` vide : toutes les requêtes sont refusées, l'oubli se voit aussitôt.
+- `DJANGO_ALLOWED_HOSTS` vide : toutes les requêtes sont refusées, l'oubli se voit aussitôt ;
+- `S3_PUBLIC_BUCKET` différent de `media` : les couvertures seraient demandées à une
+  adresse que Nginx ne sert pas, et le catalogue s'afficherait sans aucune image.
 
 ### Étape 6 — Rattacher le domaine
 
@@ -395,7 +432,7 @@ Onglet **Domains** du service, bouton **Add Domain** :
 | Champ | Valeur |
 |---|---|
 | **Service** | `web` |
-| **Host** | `fasolib.bf` |
+| **Host** | `fasolib.e-busness.cloud` |
 | **Path** | `/` |
 | **Container Port** | `80` |
 | **HTTPS** | activé |
@@ -434,14 +471,14 @@ docker ps --filter name=api --format "{{.Names}}"
 docker exec -it <nom-du-conteneur> python manage.py createsuperuser
 ```
 
-Ce compte ouvre le back-office, sur `https://fasolib.bf/admin/connexion`.
+Ce compte ouvre le back-office, sur `https://fasolib.e-busness.cloud/admin/connexion`.
 
 ### Étape 9 — Déclarer les notifications de paiement
 
 Dans le tableau de bord Genius Pay, déclarez l'adresse de notification :
 
 ```
-https://fasolib.bf/geniuspay/webhook/
+https://fasolib.e-busness.cloud/geniuspay/webhook/
 ```
 
 et reportez le secret associé dans `GENIUSPAY_WEBHOOK_SECRET` (étape 5), puis redéployez.
@@ -449,24 +486,23 @@ et reportez le secret associé dans `GENIUSPAY_WEBHOOK_SECRET` (étape 5), puis 
 ### Étape 10 — Vérifier
 
 ```bash
-curl https://fasolib.bf/api/health/
+curl https://fasolib.e-busness.cloud/api/health/
 # attendu : {"status": "ok"}
 ```
 
 Puis, dans un navigateur :
 
-- [ ] `https://fasolib.bf` s'ouvre, le cadenas est là, sans avertissement ;
+- [ ] `https://fasolib.e-busness.cloud` s'ouvre, le cadenas est là, sans avertissement ;
+- [ ] le site déjà en ligne sur `e-busness.cloud` répond toujours ;
 - [ ] le catalogue affiche les couvertures ;
 - [ ] la console du navigateur ne montre **aucun** message commençant par « Refused to … » ;
 - [ ] un achat de bout en bout, avec un vrai paiement, puis le livre ouvert dans le lecteur ;
 - [ ] un « mot de passe oublié » demandé depuis la page de connexion, et l'e-mail bien reçu.
 
-**Une ligne reste à adapter** avant que les couvertures ne s'affichent : dans
-[`deploy/nginx/common.conf`](deploy/nginx/common.conf), la règle `img-src` de la politique
-de sécurité contient `https://media.example.bf`. Remplacez-la par le domaine de votre
-stockage d'images, sinon le navigateur les bloquera. [EXPLOITATION.md](docs/EXPLOITATION.md)
-explique aussi comment servir ce stockage sous votre propre domaine, ce qui supprime cette
-ligne et rend les couvertures disponibles hors ligne.
+**Rien à adapter pour les couvertures.** Elles sont servies par votre domaine, sous
+`/media/` : Nginx relaie le stockage objet, qui reste sur le réseau privé de la
+composition. Aucune autre origine n'entre donc dans la politique de sécurité, et le
+service worker peut les garder pour l'affichage hors ligne.
 
 ### Étape 11 — Redéployer à chaque modification
 
@@ -492,8 +528,11 @@ Les migrations s'appliquent automatiquement avant que l'API ne reprenne les requ
 | L'installation de Dokploy échoue | Un port 80, 443 ou 3000 déjà pris | Repérez le service fautif avec `ss -tlnp`, puis arrêtez-le |
 | Le site boucle en redirections | `X-Forwarded-Proto` perdu en route | Le projet le gère ([`forwarded.conf`](deploy/nginx/forwarded.conf)) ; vérifiez qu'aucun autre proxy n'a été ajouté devant |
 | Tous les visiteurs partagent la limite de connexion | `NUM_PROXIES` mal réglé | Mettez `2` derrière Dokploy |
-| Pas de certificat HTTPS | Le domaine ne pointe pas encore vers le serveur | `dig +short fasolib.bf`, attendez la propagation DNS, puis redéployez |
-| Les couvertures ne s'affichent pas | Domaine du stockage absent de la politique de sécurité | Corrigez `img-src` dans `deploy/nginx/common.conf` |
+| Pas de certificat HTTPS | Le sous-domaine ne pointe pas encore vers le serveur | `dig +short fasolib.e-busness.cloud`, attendez la propagation DNS, puis redéployez |
+| Pas de certificat, alors que le DNS est bon | L'enregistrement `CAA` du domaine n'autorise pas Let's Encrypt | Vérifiez `dig CAA e-busness.cloud` : il doit contenir `issue "letsencrypt.org"` |
+| Le sous-domaine répond `404 page not found` | C'est Traefik : il écoute, mais aucun service ne porte encore ce nom | Ajoutez le domaine à l'étape 6, puis **redéployez** — sur une composition, le changement n'est pris qu'au déploiement suivant |
+| Le navigateur refuse d'ouvrir le site en `http://` | Le HSTS du domaine principal couvre ses sous-domaines | C'est voulu. Ouvrez `https://`, une fois le certificat délivré |
+| Les couvertures ne s'affichent pas | Le compartiment public ne s'appelle pas `media`, ou le service `s3` est arrêté | L'API refuse de démarrer dans le premier cas ; dans le second, regardez les journaux de `s3` et testez `/media/` depuis le conteneur `web` |
 | Le serveur se fige pendant un déploiement | Pas assez de mémoire pour compiler | Passez à KVM 2, ou construisez les images ailleurs |
 | « Votre exemplaire est en préparation » sans fin | Le service `worker` ne tourne pas | Regardez ses journaux dans Dokploy |
 
@@ -600,7 +639,7 @@ Deux fichiers, et la différence entre les deux compte.
 
 | Fichier | Portée | Quand s'en servir |
 |---|---|---|
-| [`.zap/regles.tsv`](.zap/regles.tsv) | Éteint **une règle entière** | Une règle sans objet ici, par exemple un en-tête qui casserait l'affichage des couvertures |
+| [`.zap/regles.tsv`](.zap/regles.tsv) | Éteint **une règle entière** | Une règle sans objet sur cette plateforme. Il n'y en a aucune aujourd'hui |
 | [`.zap/faux-positifs.tsv`](.zap/faux-positifs.tsv) | Écarte **une occurrence précise** : règle, méthode, adresse, paramètre | Une alerte vérifiée à la main et comprise comme fausse |
 
 Une injection SQL ne s'éteint jamais par la première voie. Les trois occurrences écartées

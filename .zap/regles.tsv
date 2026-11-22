@@ -8,4 +8,7 @@
 # qu'exigent les animations du site — ne sont pas ignorées : elles figurent dans chaque
 # rapport, sans bloquer, pour qu'on ne les oublie pas.
 
-90004	IGNORE	(Cross-Origin-Embedder-Policy : exiger require-corp bloquerait les couvertures, servies depuis le stockage objet, donc depuis une autre origine. Deviendra applicable quand ce stockage sera servi sous le domaine du site.)
+# Aucune règle n'est ignorée aujourd'hui. La dernière à l'avoir été, 90004
+# (Cross-Origin-Embedder-Policy), ne l'est plus : l'en-tête est posé depuis que les
+# couvertures sont servies par le domaine du site, et les deux lecteurs ont été éprouvés
+# sous cet en-tête.
