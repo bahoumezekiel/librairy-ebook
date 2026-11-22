@@ -232,12 +232,19 @@ REST_FRAMEWORK = {
     # « contact » et « newsletter » : formulaires publics, par adresse IP.
     # « password_reset » : demande de lien, par adresse IP. Serré, car chaque appel
     # envoie un e-mail à un tiers : la route ne doit pas servir à le harceler.
+    #
+    # Les valeurs par défaut sont celles de la production : les laisser telles quelles.
+    # Elles ne sont réglables que pour la pile jetable du test d'intrusion, où un scanner
+    # actif se ferait sinon refouler dès sa dixième requête — il ne mesurerait plus que
+    # notre limitation, prendrait la différence de réponse pour une faille, et surtout
+    # n'atteindrait plus le code à éprouver. La limitation, elle, est vérifiée par les
+    # tests et par la passe « site » du pipeline, à travers Nginx.
     "DEFAULT_THROTTLE_RATES": {
-        "auth": "10/minute",
-        "orders": "10/minute",
-        "contact": "5/hour",
-        "newsletter": "5/hour",
-        "password_reset": "5/hour",
+        "auth": config("THROTTLE_AUTH", default="10/minute"),
+        "orders": config("THROTTLE_ORDERS", default="10/minute"),
+        "contact": config("THROTTLE_CONTACT", default="5/hour"),
+        "newsletter": config("THROTTLE_NEWSLETTER", default="5/hour"),
+        "password_reset": config("THROTTLE_PASSWORD_RESET", default="5/hour"),
     },
     # Nombre de proxys (Nginx) devant Django, pour lire la vraie adresse IP du client.
     "NUM_PROXIES": config("NUM_PROXIES", default=0, cast=int),

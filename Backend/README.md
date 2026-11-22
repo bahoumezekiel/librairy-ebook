@@ -73,6 +73,7 @@ Copy-Item ..\.env.example ..\.env
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173` (le back-office en développement) |
 | `FRONTEND_URL` | `http://localhost:5173` |
 | `NUM_PROXIES` | `0` en développement, `1` derrière Nginx |
+| `THROTTLE_AUTH`, `THROTTLE_ORDERS`, `THROTTLE_CONTACT`, `THROTTLE_NEWSLETTER`, `THROTTLE_PASSWORD_RESET` | **À ne pas renseigner.** Les débits de la limitation, dont les valeurs par défaut sont celles de production. Seule la pile jetable du test d'intrusion les desserre, pour que le scanner atteigne le code au lieu de se faire refouler |
 | `GENIUSPAY_SIMULATION` | `True` pour tester les achats sans clés Genius Pay : le client choisit l'issue du paiement sur une page du site. À laisser sur `False` dès que vous avez des clés ; l'API refuse de démarrer si cette option est active avec `DJANGO_DEBUG=False` |
 | `GENIUSPAY_API_SECRET` | Votre clé secrète Genius Pay (`sk_sandbox_…` en développement, `sk_live_…` en production). Visible dans **Paramètres → API** du tableau de bord Genius Pay. |
 | `GENIUSPAY_API_KEY` | Votre clé publique (`pk_sandbox_…`). Facultative en sandbox : Genius Pay accepte la clé secrète seule, qui est alors utilisée à sa place. À renseigner en production. |

@@ -622,11 +622,18 @@ ZAP n'y découvre aucune adresse d'API, car rien n'y est écrit en clair dans le
 seconde passe est donc pilotée par le **schéma OpenAPI** que l'API produit elle-même — 75
 adresses, décrites par le code, jamais par une liste à tenir à jour.
 
-**Pourquoi l'API est visée directement, sans passer par Nginx.** Un scanner actif envoie
-des milliers de requêtes : la limitation de débit répondrait 429 dès la deuxième seconde,
-et masquerait les failles applicatives au lieu de les révéler. Cette limitation, elle, est
-éprouvée par la première passe et par les tests. Chaque défense est ainsi mesurée là où
-elle agit.
+**Pourquoi l'API est visée directement, et sans limitation de débit.** Un scanner actif
+envoie des milliers de requêtes. Nos deux limitations — celle de Nginx, puis celle de
+Django — lui répondraient 429 dès sa dixième, et il ne mesurerait plus qu'elles : le code,
+lui, ne serait plus jamais atteint. Pire, il prendrait la différence entre une réponse
+normale et un 429 pour une injection SQL ; c'est exactement ce qui est arrivé, et ce qui a
+bloqué une mise en production à tort.
+
+La passe « API » contourne donc Nginx, et la pile jetable desserre les débits de Django
+([`deploy/env.scan-securite`](deploy/env.scan-securite)). Ces débits ne sont réglables
+**que** pour cela : leurs valeurs par défaut sont celles de production. La limitation,
+elle, est éprouvée là où elle agit — par la passe « site », à travers Nginx, et par les
+tests. Chaque défense est ainsi mesurée à sa place.
 
 **Ce qui bloque la mise en production.** ZAP ne sait qu'échouer sur toutes les alertes ou
 sur aucune. [`verdict_zap.py`](.github/scripts/verdict_zap.py) tranche à sa place : une
@@ -642,11 +649,16 @@ Deux fichiers, et la différence entre les deux compte.
 | [`.zap/regles.tsv`](.zap/regles.tsv) | Éteint **une règle entière** | Une règle sans objet sur cette plateforme. Il n'y en a aucune aujourd'hui |
 | [`.zap/faux-positifs.tsv`](.zap/faux-positifs.tsv) | Écarte **une occurrence précise** : règle, méthode, adresse, paramètre | Une alerte vérifiée à la main et comprise comme fausse |
 
-Une injection SQL ne s'éteint jamais par la première voie. Les trois occurrences écartées
-aujourd'hui l'ont été une à une, avec la vérification qui les accompagne : aucune requête
-SQL brute dans le projet, charge rejouée à la main et refusée à la validation, et un
-`DROP TABLE` envoyé pour de bon qui n'a rien détruit. La même règle, sur une autre adresse
-ou un autre paramètre, bloque toujours.
+Une injection SQL ne s'éteint jamais par la première voie : on écarte une occurrence, pas
+une règle, et la même alerte sur une autre adresse bloque toujours.
+
+**Les deux fichiers sont vides aujourd'hui**, et c'est le but. Trois occurrences y
+figuraient, toutes de la règle « injection SQL ». Elles n'étaient pas des failles, mais
+elles n'étaient pas non plus de simples bizarreries de l'outil : le scanner déclenchait
+notre limitation de débit, et prenait l'écart entre une réponse normale et un 429 pour une
+injection. En traitant cette cause plutôt que ses symptômes, les trois lignes sont devenues
+inutiles — et le détecteur a cessé d'être aveugle sur trois routes. Une exemption qui dure
+est presque toujours le signe d'un problème qu'on n'a pas encore compris.
 
 ### Rejouer l'analyse chez soi
 
