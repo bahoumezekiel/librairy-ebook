@@ -24,8 +24,14 @@ export function PriceTag({ price, className = "" }: { price: number | null; clas
 }
 
 /**
- * Carte d'un livre : couverture, étiquette orange de catégorie posée sur l'image,
- * puis auteur, titre, prix et note. Au survol, l'image zoome et une flèche apparaît.
+ * Carte d'un livre : la couverture, puis le prix et la note. Rien d'autre.
+ *
+ * Le titre, l'auteur et la catégorie ne sont pas répétés sous l'image : ils figurent déjà
+ * sur la couverture, et la fiche du livre les donne en entier. La carte y gagne près d'un
+ * cinquième de sa hauteur, et le catalogue se parcourt d'un coup d'œil.
+ *
+ * Le titre reste porté par le texte de remplacement de l'image : un lecteur d'écran
+ * annonce donc bien « Couverture de … », et non le seul prix.
  */
 export function BookCard({ book }: { book: CatalogBook }) {
   return (
@@ -54,19 +60,9 @@ export function BookCard({ book }: { book: CatalogBook }) {
           </span>
         </div>
 
-        <div className="flex flex-1 flex-col p-6">
-          {/* Sous l'image, et non posée dessus : elle y masquait le bas des couvertures. */}
-          <span className={`w-fit max-w-full truncate bg-brand px-3 py-1.5 text-ink ${LABEL}`}>
-            {book.category.name}
-          </span>
-          <p className={`mt-4 truncate text-muted ${LABEL}`}>{book.author}</p>
-          <h3 className="mt-3 line-clamp-2 text-lg font-bold leading-snug decoration-brand decoration-2 underline-offset-4 group-hover:underline">
-            {book.title}
-          </h3>
-          <div className="mt-auto flex items-center justify-between gap-3 pt-6 text-sm">
-            <PriceTag price={book.price} />
-            <RatingSummary average={book.rating_average} count={book.rating_count} />
-          </div>
+        <div className="flex items-center justify-between gap-3 p-5 text-sm">
+          <PriceTag price={book.price} />
+          <RatingSummary average={book.rating_average} count={book.rating_count} />
         </div>
       </Link>
     </motion.article>
@@ -78,10 +74,9 @@ export function BookCardSkeleton() {
   return (
     <div className="border border-line bg-white" aria-hidden>
       <div className="aspect-2/3 animate-pulse bg-line/70" />
-      <div className="space-y-3 p-6">
-        <div className="h-3 w-1/3 animate-pulse bg-line/70" />
-        <div className="h-5 w-4/5 animate-pulse bg-line/70" />
-        <div className="h-4 w-1/2 animate-pulse bg-line/70" />
+      <div className="flex items-center justify-between gap-3 p-5">
+        <div className="h-4 w-1/3 animate-pulse bg-line/70" />
+        <div className="h-4 w-1/5 animate-pulse bg-line/70" />
       </div>
     </div>
   );
