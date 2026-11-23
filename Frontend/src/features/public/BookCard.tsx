@@ -87,10 +87,5 @@ export function BookCardSkeleton() {
   );
 }
 
-/**
- * Grille de livres : jusqu'à cinq cartes par rangée sur grand écran.
- *
- * Une carte plus étroite est aussi plus courte, puisque la couverture garde sa proportion :
- * la rangée tient dans l'écran sans qu'on ait à rapetisser les images.
- */
-export const BOOK_GRID = "grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5";
+/** Grille de livres : quatre cartes par rangée sur grand écran, sur toute la largeur. */
+export const BOOK_GRID = "grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4";
