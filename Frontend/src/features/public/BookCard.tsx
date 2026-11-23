@@ -14,7 +14,21 @@ const LABEL = "text-xs font-bold uppercase tracking-[0.18em]";
 export const isNew = (publishedAt: string) =>
   Date.now() - new Date(publishedAt).getTime() < NEW_FOR_DAYS * 24 * 3600 * 1000;
 
-/** Prix d'un livre, ou étiquette verte « Gratuit ». */
+/**
+ * Étiquette d'accès, pour le catalogue : « Gratuit » en vert, « Premium » en orange.
+ *
+ * Le montant n'y figure pas. Il est donné sur la fiche du livre, où le lecteur a sous les
+ * yeux de quoi décider : la description, le format, les avis.
+ */
+export function AccessTag({ price }: { price: number | null }) {
+  return price === null ? (
+    <span className={`bg-leaf-soft px-2.5 py-1 text-leaf-strong ${LABEL}`}>Gratuit</span>
+  ) : (
+    <span className={`bg-brand px-2.5 py-1 text-ink ${LABEL}`}>Premium</span>
+  );
+}
+
+/** Prix d'un livre, ou étiquette verte « Gratuit ». Utilisé sur la fiche du livre. */
 export function PriceTag({ price, className = "" }: { price: number | null; className?: string }) {
   return price === null ? (
     <span className={`bg-leaf-soft px-2.5 py-1 text-leaf-strong ${LABEL} ${className}`}>Gratuit</span>
@@ -61,7 +75,7 @@ export function BookCard({ book }: { book: CatalogBook }) {
         </div>
 
         <div className="flex items-center justify-between gap-3 p-5 text-sm">
-          <PriceTag price={book.price} />
+          <AccessTag price={book.price} />
           <RatingSummary average={book.rating_average} count={book.rating_count} />
         </div>
       </Link>
