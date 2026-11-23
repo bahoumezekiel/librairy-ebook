@@ -23,7 +23,7 @@ import { Hero } from "@/features/public/Hero";
 import { formatNumber } from "@/lib/format";
 
 const SECTION = "mx-auto max-w-7xl px-4 py-20 sm:px-8";
-const SHELF_SIZE = 4;
+const SHELF_SIZE = 5;
 
 /** Icône d'une catégorie, choisie d'après les mots de son adresse. */
 const CATEGORY_ICONS: [string, LucideIcon][] = [

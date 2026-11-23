@@ -34,7 +34,8 @@ export function BookCard({ book }: { book: CatalogBook }) {
         to={`/livres/${book.slug}`}
         className="group flex h-full flex-col border border-line bg-white transition-shadow duration-300 hover:shadow-lift"
       >
-        {/* 2:3, la proportion d'une couverture de livre : elle s'affiche entière, sans rognage. */}
+        {/* 2:3, la proportion attendue des couvertures (1000 × 1500, voir le README) :
+            elles remplissent le cadre exactement, sans bande ni rognage. */}
         <div className="relative aspect-2/3 overflow-hidden bg-line">
           <img
             src={book.cover}
@@ -45,9 +46,6 @@ export function BookCard({ book }: { book: CatalogBook }) {
           {isNew(book.published_at) && (
             <span className={`absolute left-0 top-0 bg-ink px-3 py-2 text-white ${LABEL}`}>Nouveau</span>
           )}
-          <span className={`absolute bottom-0 left-0 max-w-[85%] truncate bg-brand px-4 py-2.5 text-ink ${LABEL}`}>
-            {book.category.name}
-          </span>
           <span
             className="absolute right-0 top-1/2 grid size-12 -translate-y-1/2 translate-x-full place-items-center bg-brand text-ink transition-transform duration-300 group-hover:translate-x-0"
             aria-hidden
@@ -57,7 +55,11 @@ export function BookCard({ book }: { book: CatalogBook }) {
         </div>
 
         <div className="flex flex-1 flex-col p-6">
-          <p className={`truncate text-muted ${LABEL}`}>{book.author}</p>
+          {/* Sous l'image, et non posée dessus : elle y masquait le bas des couvertures. */}
+          <span className={`w-fit max-w-full truncate bg-brand px-3 py-1.5 text-ink ${LABEL}`}>
+            {book.category.name}
+          </span>
+          <p className={`mt-4 truncate text-muted ${LABEL}`}>{book.author}</p>
           <h3 className="mt-3 line-clamp-2 text-lg font-bold leading-snug decoration-brand decoration-2 underline-offset-4 group-hover:underline">
             {book.title}
           </h3>
@@ -85,5 +87,10 @@ export function BookCardSkeleton() {
   );
 }
 
-/** Grille de livres : quatre cartes par rangée sur grand écran, sur toute la largeur. */
-export const BOOK_GRID = "grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4";
+/**
+ * Grille de livres : jusqu'à cinq cartes par rangée sur grand écran.
+ *
+ * Une carte plus étroite est aussi plus courte, puisque la couverture garde sa proportion :
+ * la rangée tient dans l'écran sans qu'on ait à rapetisser les images.
+ */
+export const BOOK_GRID = "grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5";

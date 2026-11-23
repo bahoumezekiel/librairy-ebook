@@ -357,11 +357,22 @@ Dans Dokploy :
 Onglet **Environment** du service. Collez ce bloc, puis remplacez ce qui est entre
 chevrons. Dokploy l'enregistre dans un fichier `.env` que la composition lit.
 
+> **Allez d'abord chercher le secret des notifications.** Il ne figure pas avec vos clés
+> API : Genius Pay le crée au moment où vous déclarez l'adresse de notification. Faites-le
+> maintenant, dans leur tableau de bord, en déclarant :
+>
+> ```
+> https://fasolib.e-busness.cloud/geniuspay/webhook/
+> ```
+>
+> Nul besoin que le site réponde déjà : Genius Pay ne l'appellera qu'au premier paiement.
+> Sans ce secret, l'API **refuse de démarrer**, et le déploiement de l'étape 7 échouerait.
+
 ```ini
 # --- Django -------------------------------------------------------------
 DJANGO_SECRET_KEY=<clé générée, voir plus bas>
 DJANGO_DEBUG=False
-DJANGO_ALLOWED_HOSTS=fasolib.e-busness.cloud
+DJANGO_ALLOWED_HOSTS=fasolib.e-busness.cloud,127.0.0.1
 CORS_ALLOWED_ORIGINS=https://fasolib.e-busness.cloud
 FRONTEND_URL=https://fasolib.e-busness.cloud
 NUM_PROXIES=2
@@ -411,6 +422,14 @@ python3 -c "import secrets; print(secrets.token_urlsafe(64))"
 présentent devant Django : Traefik, puis Nginx. Ce chiffre lui dit où retrouver la vraie
 adresse du client. Trop bas, tous vos visiteurs partageraient la même limite de tentatives
 de connexion ; trop haut, la limite ne s'appliquerait plus à personne.
+
+**`127.0.0.1` dans `DJANGO_ALLOWED_HOSTS` n'est pas une négligence.** Le contrôle de santé
+du conteneur interroge l'API depuis sa propre boucle locale
+(`curl http://127.0.0.1:8000/api/health/`), avec l'en-tête `Host: 127.0.0.1:8000`. Sans ce
+nom dans la liste, Django répond `400 DisallowedHost`, le conteneur est déclaré malsain, et
+le déploiement s'arrête sur `dependency failed to start` — alors que l'API fonctionne.
+L'autre nom, votre domaine, sert au trafic réel : Nginx transmet à Django l'en-tête `Host`
+du visiteur.
 
 Cinq protections refusent de laisser passer une mauvaise configuration — l'API ne
 démarre pas, plutôt que de tourner en étant vulnérable, ou visiblement cassée :
@@ -473,15 +492,25 @@ docker exec -it <nom-du-conteneur> python manage.py createsuperuser
 
 Ce compte ouvre le back-office, sur `https://fasolib.e-busness.cloud/admin/connexion`.
 
-### Étape 9 — Déclarer les notifications de paiement
+### Étape 9 — Vérifier les notifications de paiement
 
-Dans le tableau de bord Genius Pay, déclarez l'adresse de notification :
+L'adresse a été déclarée à l'étape 5, et son secret est déjà dans vos variables. Il reste à
+s'assurer que Genius Pay parle bien à votre serveur, maintenant qu'il répond.
 
-```
-https://fasolib.e-busness.cloud/geniuspay/webhook/
-```
+Dans leur tableau de bord, le webhook doit porter :
 
-et reportez le secret associé dans `GENIUSPAY_WEBHOOK_SECRET` (étape 5), puis redéployez.
+| | |
+|---|---|
+| URL | `https://fasolib.e-busness.cloud/geniuspay/webhook/` — la barre finale comprise |
+| Environnement | **Production**, comme vos clés |
+| Événements | tous les `payment.*` |
+
+La barre oblique finale n'est pas décorative : sans elle, Django répond par une redirection,
+et certains clients perdent le corps de la requête en la suivant.
+
+Vous n'avez rien à craindre d'un événement de trop : une notification n'accorde jamais un
+livre par elle-même. Le serveur n'en retient que la référence, puis **relit le paiement
+auprès de Genius Pay** avant toute décision.
 
 ### Étape 10 — Vérifier
 
@@ -533,6 +562,10 @@ Les migrations s'appliquent automatiquement avant que l'API ne reprenne les requ
 | Le sous-domaine répond `404 page not found` | C'est Traefik : il écoute, mais aucun service ne porte encore ce nom | Ajoutez le domaine à l'étape 6, puis **redéployez** — sur une composition, le changement n'est pris qu'au déploiement suivant |
 | Le navigateur refuse d'ouvrir le site en `http://` | Le HSTS du domaine principal couvre ses sous-domaines | C'est voulu. Ouvrez `https://`, une fois le certificat délivré |
 | Les couvertures ne s'affichent pas | Le compartiment public ne s'appelle pas `media`, ou le service `s3` est arrêté | L'API refuse de démarrer dans le premier cas ; dans le second, regardez les journaux de `s3` et testez `/media/` depuis le conteneur `web` |
+| `dependency failed to start: container api is unhealthy` | `127.0.0.1` absent de `DJANGO_ALLOWED_HOSTS` : le contrôle de santé reçoit un `400 DisallowedHost` | Ajoutez-le, redéployez. Les journaux de `api` le disent mot pour mot |
+| `migrate` échoue sur `port 5434 ... Connection refused` | Variables recopiées depuis le poste de développement | Sur le serveur : `POSTGRES_HOST=db`, `POSTGRES_PORT=5432`, `REDIS_URL=redis://redis:6379/0`, `S3_ENDPOINT_URL=http://s3:7070` |
+| `migrate` échoue sur `password authentication failed` | La base a été créée lors d'un déploiement antérieur, avec un autre mot de passe | Tant qu'aucune donnée réelle n'existe : `docker rm -f <conteneur-db>` puis `docker volume rm <projet>_postgres_data`, et redéployez |
+| `Domain … is attached to service "web" which does not exist` | **Compose Path** pointe sur `./docker-compose.yml` | Mettez `./docker-compose.prod.yml` : le premier fichier ne sert qu'au développement |
 | Le serveur se fige pendant un déploiement | Pas assez de mémoire pour compiler | Passez à KVM 2, ou construisez les images ailleurs |
 | « Votre exemplaire est en préparation » sans fin | Le service `worker` ne tourne pas | Regardez ses journaux dans Dokploy |
 
